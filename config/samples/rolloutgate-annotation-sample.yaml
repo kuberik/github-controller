@@ -1,0 +1,22 @@
+apiVersion: kuberik.com/v1alpha1
+kind: RolloutGate
+metadata:
+  name: github-rolloutgate-annotation-sample
+  namespace: default
+  annotations:
+    kuberik.com/gate-class: "github"
+    kuberik.com/github-repo: "myorg/myapp"
+    kuberik.com/deployment-name: "myapp-staging"
+    kuberik.com/environment: "staging"
+    kuberik.com/ref: "develop"
+    kuberik.com/description: "Staging deployment for myapp"
+    kuberik.com/auto-merge: "false"
+    kuberik.com/dependencies: "myapp-testing"
+    kuberik.com/required-contexts: "ci"
+spec:
+  rolloutRef:
+    name: myapp-rollout
+  passing: true
+
+
+

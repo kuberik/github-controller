@@ -1,135 +1,207 @@
-# github-controller
-// TODO(user): Add simple overview of use/purpose
+# GitHub RolloutGate Controller
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubernetes controller for managing RolloutGate resources with GitHub integration. This controller implements a GitHub gate class that reports deployment status to GitHub's Deployments API and manages deployment dependencies.
 
-## Getting Started
+## Features
+
+- **GitHub Deployment Integration**: Creates and manages GitHub deployments for RolloutGate resources
+- **Dependency Management**: Reads GitHub deployment statuses to determine allowed versions based on successful deployments
+- **Annotation-based Configuration**: Uses annotations for GitHub-specific configuration
+- **Status Reporting**: Reports deployment status back to GitHub Deployments API
+
+## Architecture
+
+The controller integrates with the existing RolloutGate API from the rollout-controller and extends it with GitHub-specific functionality:
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   RolloutGate   │    │ GitHub Rollout  │    │ GitHub Deploy   │
+│   (CRD)         │───▶│ Gate Controller │───▶│ API             │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌─────────────────┐
+                       │ Dependency      │
+                       │ Resolution      │
+                       └─────────────────┘
+```
+
+## Configuration
+
+The controller uses annotations on the RolloutGate resource for GitHub-specific configuration:
+
+```yaml
+apiVersion: kuberik.com/v1alpha1
+kind: RolloutGate
+metadata:
+  name: github-gate
+  annotations:
+    kuberik.com/gate-class: "github"
+    kuberik.com/github-repo: "myorg/myapp"
+    kuberik.com/deployment-name: "myapp-production"
+    kuberik.com/environment: "production"
+    kuberik.com/ref: "main"
+    kuberik.com/description: "Production deployment"
+    kuberik.com/auto-merge: "true"
+    kuberik.com/dependencies: "myapp-staging,myapp-testing"
+    kuberik.com/required-contexts: "ci,security-scan"
+spec:
+  rolloutRef:
+    name: myapp-rollout
+  passing: true
+```
+
+## Required Annotations
+
+- `kuberik.com/gate-class`: Must be set to "github" to enable GitHub gate functionality
+- `kuberik.com/github-repo`: GitHub repository in format "owner/repo"
+- `kuberik.com/deployment-name`: Name of the current deployment
+
+## Optional Annotations
+
+- `kuberik.com/environment`: GitHub deployment environment (default: "production")
+- `kuberik.com/ref`: Git reference (branch, tag, or SHA)
+- `kuberik.com/description`: Description for the deployment
+- `kuberik.com/auto-merge`: Whether to automatically merge the deployment
+- `kuberik.com/dependencies`: Comma-separated list of deployment dependencies
+- `kuberik.com/required-contexts`: Comma-separated list of required status check contexts
+- `kuberik.com/github-token`: Name of the secret containing GitHub token (default: "github-token")
+
+## GitHub Token Secret
+
+The controller requires a GitHub token to authenticate with the GitHub API. Create a secret with the token:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-token
+  namespace: default
+type: Opaque
+data:
+  token: <base64-encoded-github-token>
+```
+
+## Requirements
+
+- The referenced `Rollout` must have deployment history with a `Revision` field in the `VersionInfo` structure
+- If the revision is not available, the controller will fail with an error message
+
+## How It Works
+
+1. **Gate Detection**: The controller identifies RolloutGate resources with `kuberik.com/gate-class: "github"` annotation.
+
+2. **Configuration Extraction**: GitHub configuration is extracted from annotations.
+
+3. **GitHub Client**: A GitHub client is created using the token from the specified secret.
+
+4. **Version Resolution**: The controller gets the current version from the referenced Rollout's deployment history, using the `Revision` field from `VersionInfo`. If the revision is not available, the controller will error out as it's required for GitHub deployments.
+
+5. **Deployment Creation**: A GitHub deployment is created or updated using the current version from the rollout.
+
+6. **Status Reporting**: The deployment status is reported back to GitHub's Deployments API.
+
+7. **Dependency Resolution**: If dependencies are specified, the controller checks GitHub deployment statuses to determine allowed versions based on successful deployments.
+
+8. **Version Management**: Allowed versions are updated based on successful dependency deployments.
+
+## Installation
 
 ### Prerequisites
-- go version v1.24.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Kubernetes cluster
+- kubectl configured
+- GitHub token with appropriate permissions
 
-```sh
-make docker-build docker-push IMG=<some-registry>/github-controller:tag
+### Install the Controller
+
+1. **Install CRDs**:
+   ```bash
+   kubectl apply -f config/crd/bases/
+   ```
+
+2. **Install the controller**:
+   ```bash
+   kubectl apply -k config/default/
+   ```
+
+3. **Create GitHub token secret**:
+   ```bash
+   kubectl apply -f config/samples/github-token-secret.yaml
+   ```
+
+4. **Create RolloutGate resources**:
+   ```bash
+   kubectl apply -k config/samples/
+   ```
+
+## Development
+
+### Building
+
+```bash
+make build
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+### Testing
 
-**Install the CRDs into the cluster:**
-
-```sh
-make install
+```bash
+make test
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+### Running Locally
 
-```sh
-make deploy IMG=<some-registry>/github-controller:tag
+```bash
+make run
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+## API Reference
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+### RolloutGate Spec
 
-```sh
-kubectl apply -k config/samples/
+```go
+type RolloutGateSpec struct {
+    RolloutRef *corev1.LocalObjectReference `json:"rolloutRef"`
+    Passing    *bool                         `json:"passing,omitempty"`
+    AllowedVersions *[]string                `json:"allowedVersions,omitempty"`
+    GitHub     *GitHubConfig                 `json:"github,omitempty"`
+}
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+### GitHubConfig
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
+```go
+type GitHubConfig struct {
+    Repository        string   `json:"repository"`
+    DeploymentName    string   `json:"deploymentName"`
+    Dependencies      []string `json:"dependencies,omitempty"`
+    Environment       string   `json:"environment,omitempty"`
+    Ref               string   `json:"ref,omitempty"`
+    Description       string   `json:"description,omitempty"`
+    AutoMerge         bool     `json:"autoMerge,omitempty"`
+    RequiredContexts  []string `json:"requiredContexts,omitempty"`
+}
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+### RolloutGate Status
 
-```sh
-make uninstall
+```go
+type RolloutGateStatus struct {
+    GitHubDeploymentID *int64            `json:"githubDeploymentId,omitempty"`
+    GitHubDeploymentURL string            `json:"githubDeploymentUrl,omitempty"`
+    LastSyncTime        *metav1.Time      `json:"lastSyncTime,omitempty"`
+    Conditions          []metav1.Condition `json:"conditions,omitempty"`
+}
 ```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/github-controller:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/github-controller/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
 
 ## License
 
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Apache 2.0

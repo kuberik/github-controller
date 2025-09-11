@@ -34,6 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	"github.com/kuberik/github-operator/internal/controller"
+	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -46,6 +49,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
+	utilruntime.Must(kuberikrolloutv1alpha1.AddToScheme(scheme))
 }
 
 // nolint:gocyclo
@@ -175,6 +179,14 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+
+	if err = (&controller.RolloutGateReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RolloutGate")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
