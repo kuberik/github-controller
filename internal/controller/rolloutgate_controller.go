@@ -333,7 +333,15 @@ func (r *RolloutGateReconciler) getCurrentVersionFromRollout(rollout *kuberikrol
 		return nil
 	}
 
-	return rollout.Status.History[0].Version.Revision
+	// The history is ordered with the most recent deployment first
+	latestDeployment := rollout.Status.History[0]
+
+	// Always use the Revision field from VersionInfo - if not available, return nil
+	if latestDeployment.Version.Revision == nil {
+		return nil
+	}
+
+	return latestDeployment.Version.Revision
 }
 
 // updateRolloutGateStatus updates the RolloutGate status with GitHub deployment information
@@ -362,8 +370,8 @@ func (r *RolloutGateReconciler) updateRolloutGateStatus(ctx context.Context, rol
 
 	// Update last sync time annotation
 	now := time.Now().Format(time.RFC3339)
-	if rolloutGate.Annotations["kuberik.com/github-last-sync-time"] != now {
-		rolloutGate.Annotations["kuberik.com/github-last-sync-time"] = now
+	if rolloutGate.Annotations["kuberik.com/github-last-sync"] != now {
+		rolloutGate.Annotations["kuberik.com/github-last-sync"] = now
 		needsUpdate = true
 	}
 

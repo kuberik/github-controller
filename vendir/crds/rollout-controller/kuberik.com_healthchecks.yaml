@@ -38,14 +38,27 @@ spec:
             type: object
           spec:
             description: HealthCheckSpec defines the desired state of HealthCheck.
+            properties:
+              class:
+                description: Class specifies the type of health check (e.g., 'kustomization')
+                type: string
             type: object
           status:
             description: HealthCheckStatus defines the observed state of HealthCheck.
             properties:
+              lastChangeTime:
+                description: LastChangeTime is the timestamp when the health status
+                  last changed
+                format: date-time
+                type: string
               lastErrorTime:
                 description: LastErrorTime is the timestamp of the most recent error
                   state
                 format: date-time
+                type: string
+              message:
+                description: Message provides additional details about the health
+                  status
                 type: string
               status:
                 description: Status indicates the health state of the check (e.g.,

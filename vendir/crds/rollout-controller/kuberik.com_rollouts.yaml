@@ -15,7 +15,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.history[0].version
+    - jsonPath: .status.history[0].version.tag
       name: Version
       type: string
     - jsonPath: .status.history[0].message
@@ -213,13 +213,43 @@ spec:
           status:
             description: RolloutStatus defines the observed state of Rollout.
             properties:
+              artifactType:
+                description: |-
+                  ArtifactType is the media/artifact type of the image extracted from the manifest.
+                  This includes OCI artifact types, container image types, and other media types.
+                  This field is set once for the entire rollout based on the latest available release.
+                type: string
               availableReleases:
                 description: AvailableReleases is a list of all releases available
                   in the releases repository.
                 items:
-                  type: string
+                  description: VersionInfo represents detailed information about a
+                    version.
+                  properties:
+                    created:
+                      description: Created is the creation timestamp extracted from
+                        OCI annotations if available.
+                      format: date-time
+                      type: string
+                    digest:
+                      description: Digest is the image digest if available from the
+                        ImagePolicy.
+                      type: string
+                    revision:
+                      description: Revision is the revision information extracted
+                        from OCI annotations if available.
+                      type: string
+                    tag:
+                      description: Tag is the image tag (e.g., "v1.2.3", "latest").
+                      type: string
+                    version:
+                      description: Version is the semantic version extracted from
+                        OCI annotations if available.
+                      type: string
+                  required:
+                  - tag
+                  type: object
                 type: array
-                x-kubernetes-list-type: set
               conditions:
                 description: Conditions represents the current state of the rollout
                   process.
@@ -286,9 +316,33 @@ spec:
                   GatedReleaseCandidates is a list of release candidates that have passed through all gates.
                   This shows which versions are actually available for deployment after gate evaluation.
                 items:
-                  type: string
+                  description: VersionInfo represents detailed information about a
+                    version.
+                  properties:
+                    created:
+                      description: Created is the creation timestamp extracted from
+                        OCI annotations if available.
+                      format: date-time
+                      type: string
+                    digest:
+                      description: Digest is the image digest if available from the
+                        ImagePolicy.
+                      type: string
+                    revision:
+                      description: Revision is the revision information extracted
+                        from OCI annotations if available.
+                      type: string
+                    tag:
+                      description: Tag is the image tag (e.g., "v1.2.3", "latest").
+                      type: string
+                    version:
+                      description: Version is the semantic version extracted from
+                        OCI annotations if available.
+                      type: string
+                  required:
+                  - tag
+                  type: object
                 type: array
-                x-kubernetes-list-type: set
               gates:
                 description: Gates summarizes the status of each gate relevant to
                   this rollout.
@@ -364,8 +418,31 @@ spec:
                       format: date-time
                       type: string
                     version:
-                      description: Version is the version that was deployed.
-                      type: string
+                      description: Version is the version information that was deployed.
+                      properties:
+                        created:
+                          description: Created is the creation timestamp extracted
+                            from OCI annotations if available.
+                          format: date-time
+                          type: string
+                        digest:
+                          description: Digest is the image digest if available from
+                            the ImagePolicy.
+                          type: string
+                        revision:
+                          description: Revision is the revision information extracted
+                            from OCI annotations if available.
+                          type: string
+                        tag:
+                          description: Tag is the image tag (e.g., "v1.2.3", "latest").
+                          type: string
+                        version:
+                          description: Version is the semantic version extracted from
+                            OCI annotations if available.
+                          type: string
+                      required:
+                      - tag
+                      type: object
                   required:
                   - timestamp
                   - version
@@ -376,9 +453,39 @@ spec:
                   ReleaseCandidates is a list of releases that are candidates for the next deployment.
                   These are filtered from AvailableReleases based on deployment history and version ordering.
                 items:
-                  type: string
+                  description: VersionInfo represents detailed information about a
+                    version.
+                  properties:
+                    created:
+                      description: Created is the creation timestamp extracted from
+                        OCI annotations if available.
+                      format: date-time
+                      type: string
+                    digest:
+                      description: Digest is the image digest if available from the
+                        ImagePolicy.
+                      type: string
+                    revision:
+                      description: Revision is the revision information extracted
+                        from OCI annotations if available.
+                      type: string
+                    tag:
+                      description: Tag is the image tag (e.g., "v1.2.3", "latest").
+                      type: string
+                    version:
+                      description: Version is the semantic version extracted from
+                        OCI annotations if available.
+                      type: string
+                  required:
+                  - tag
+                  type: object
                 type: array
-                x-kubernetes-list-type: set
+              source:
+                description: |-
+                  Source is the source information extracted from OCI annotations.
+                  This typically contains the repository URL or source code location.
+                  This field is set once for the entire rollout based on the latest available release.
+                type: string
             type: object
         type: object
     served: true
