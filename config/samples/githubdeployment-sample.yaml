@@ -1,0 +1,35 @@
+apiVersion: kuberik.com/v1alpha1
+kind: GitHubDeployment
+metadata:
+  name: github-deployment-sample
+  namespace: default
+spec:
+  # Reference to the Rollout that this GitHubDeployment manages
+  rolloutRef:
+    name: myapp-rollout
+
+  # GitHub repository configuration
+  repository: "myorg/myapp"
+  deploymentName: "myapp-production"
+  environment: "production"
+  ref: "main"
+  description: "Production deployment for myapp"
+  autoMerge: true
+
+  # Dependencies and requirements
+  dependencies:
+    - "myapp-staging"
+    - "myapp-testing"
+  requiredContexts:
+    - "ci"
+    - "security-scan"
+
+  # GitHub token configuration
+  githubTokenSecret: "github-token"
+
+  # RolloutGate configuration
+  rolloutGateSpec:
+    passing: true
+    allowedVersions:
+      - "v1.0.0"
+      - "v1.1.0"

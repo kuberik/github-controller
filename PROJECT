@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: github-controller
 repo: github.com/kuberik/github-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kuberik.com
+  group: github
+  kind: GitHubDeployment
+  path: github.com/kuberik/github-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

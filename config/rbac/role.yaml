@@ -13,23 +13,43 @@ rules:
   - list
   - watch
 - apiGroups:
-  - kuberik.com
+  - github.kuberik.com
   resources:
-  - rolloutgates
+  - githubdeployments
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
   - update
   - watch
 - apiGroups:
-  - kuberik.com
+  - github.kuberik.com
   resources:
-  - rolloutgates/status
+  - githubdeployments/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - github.kuberik.com
+  resources:
+  - githubdeployments/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - kuberik.com
+  resources:
+  - rolloutgates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - kuberik.com
   resources:
@@ -38,9 +58,3 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - kuberik.com
-  resources:
-  - rollouts/status
-  verbs:
-  - get
