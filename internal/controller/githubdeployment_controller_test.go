@@ -907,5 +907,449 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
 			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(Equal("test-github-deployment-status-gate"))
 		})
+
+		It("Should update allowed versions from dependencies", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			token := os.Getenv("GITHUB_TOKEN")
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(context.Background(), ts)
+			githubClient := github.NewClient(tc)
+
+			By("Creating staging deployment with success status")
+			// First create a dependency deployment (staging)
+			stagingRef := "main"
+			stagingDeploymentRequest := &github.DeploymentRequest{
+				Ref:                   github.String(stagingRef),
+				Environment:           github.String("staging"),
+				ProductionEnvironment: github.Bool(false),
+			}
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Create success status for staging deployment
+			stagingStatusRequest := &github.DeploymentStatusRequest{
+				State:       github.String("success"),
+				Description: github.String("Staging deployment successful"),
+				Environment: github.String("staging"),
+			}
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), stagingStatusRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Creating production deployment with dependencies on staging")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment with dependencies")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-deps",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment-deps",
+					Environment:    "production",
+					Dependencies:   []string{"staging"},
+					RolloutGateSpec: kuberikrolloutv1alpha1.RolloutGateSpec{
+						RolloutRef: &corev1.LocalObjectReference{
+							Name: "test-rollout-deps",
+						},
+						Passing: boolPtr(true),
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment with dependencies")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+
+			By("Verifying allowed versions were updated from dependencies")
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+
+			// Should have the staging revision in allowed versions
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).ToNot(BeEmpty())
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).To(ContainElement(stagingRef))
+
+			// Clean up staging deployment
+			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID())
+		})
+
+		It("Should handle multiple dependencies", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			token := os.Getenv("GITHUB_TOKEN")
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(context.Background(), ts)
+			githubClient := github.NewClient(tc)
+
+			By("Creating first dependency deployment (staging) with success status")
+			stagingRef := "main"
+			stagingDeploymentRequest := &github.DeploymentRequest{
+				Ref:                   github.String(stagingRef),
+				Environment:           github.String("staging"),
+				ProductionEnvironment: github.Bool(false),
+			}
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			stagingStatusRequest := &github.DeploymentStatusRequest{
+				State:       github.String("success"),
+				Description: github.String("Staging deployment successful"),
+				Environment: github.String("staging"),
+			}
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), stagingStatusRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Creating second dependency deployment (qa) with success status")
+			qaRef := "main"
+			qaDeploymentRequest := &github.DeploymentRequest{
+				Ref:                   github.String(qaRef),
+				Environment:           github.String("qa"),
+				ProductionEnvironment: github.Bool(false),
+			}
+			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", qaDeploymentRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			qaStatusRequest := &github.DeploymentStatusRequest{
+				State:       github.String("success"),
+				Description: github.String("QA deployment successful"),
+				Environment: github.String("qa"),
+			}
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", qaDeployment.GetID(), qaStatusRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Creating production deployment with multiple dependencies")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-multi-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment with multiple dependencies")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-multi-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-multi-deps",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment-multi-deps",
+					Environment:    "production",
+					Dependencies:   []string{"staging", "qa"},
+					RolloutGateSpec: kuberikrolloutv1alpha1.RolloutGateSpec{
+						RolloutRef: &corev1.LocalObjectReference{
+							Name: "test-rollout-multi-deps",
+						},
+						Passing: boolPtr(true),
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment with multiple dependencies")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-multi-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+
+			By("Verifying allowed versions include versions from all dependencies")
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-multi-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+
+			// Should have both staging and qa revisions in allowed versions
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).ToNot(BeEmpty())
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).To(ContainElement(stagingRef))
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).To(ContainElement(qaRef))
+
+			// Clean up deployments
+			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID())
+			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", qaDeployment.GetID())
+		})
+
+		It("Should handle dependency with failure status", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			token := os.Getenv("GITHUB_TOKEN")
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(context.Background(), ts)
+			githubClient := github.NewClient(tc)
+
+			By("Creating dependency deployment with failure status")
+			failedRef := "main"
+			failedDeploymentRequest := &github.DeploymentRequest{
+				Ref:                   github.String(failedRef),
+				Environment:           github.String("staging"),
+				ProductionEnvironment: github.Bool(false),
+			}
+			failedDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", failedDeploymentRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Create failure status
+			failedStatusRequest := &github.DeploymentStatusRequest{
+				State:       github.String("failure"),
+				Description: github.String("Staging deployment failed"),
+				Environment: github.String("staging"),
+			}
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", failedDeployment.GetID(), failedStatusRequest)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Creating production deployment with dependency")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-failed-dep",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment with failed dependency")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-failed-dep",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-failed-dep",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment-failed-dep",
+					Environment:    "production",
+					Dependencies:   []string{"staging"},
+					RolloutGateSpec: kuberikrolloutv1alpha1.RolloutGateSpec{
+						RolloutRef: &corev1.LocalObjectReference{
+							Name: "test-rollout-failed-dep",
+						},
+						Passing: boolPtr(true),
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment with failed dependency")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-failed-dep",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+
+			By("Verifying failed dependency doesn't add to allowed versions")
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-failed-dep",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+
+			// Should not have the failed revision in allowed versions (since it failed)
+			// The ref might be "main" but it should not be in AllowedVersions because it has failure status
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).ToNot(ContainElement(failedRef))
+
+			// Clean up deployment
+			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", failedDeployment.GetID())
+		})
+
+		It("Should handle deployment without dependencies", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating Rollout with deployment history")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-no-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment without dependencies")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-no-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-no-deps",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment-no-deps",
+					Environment:    "production",
+					// No Dependencies field
+					RolloutGateSpec: kuberikrolloutv1alpha1.RolloutGateSpec{
+						RolloutRef: &corev1.LocalObjectReference{
+							Name: "test-rollout-no-deps",
+						},
+						Passing: boolPtr(true),
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment without dependencies")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-no-deps",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+
+			By("Verifying allowed versions is empty when no dependencies")
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-no-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+
+			// Should have no allowed versions
+			Expect(updatedGitHubDeployment.Status.AllowedVersions).To(BeEmpty())
+		})
 	})
 })
