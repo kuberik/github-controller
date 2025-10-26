@@ -130,9 +130,6 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 					Repository:     "kuberik/github-controller-testing",
 					DeploymentName: "test-deployment",
 					Environment:    "production",
-					RolloutGateSpec: kuberikrolloutv1alpha1.RolloutGateSpec{
-						Passing: boolPtr(true),
-					},
 				},
 			}
 
@@ -140,13 +137,6 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 			Expect(githubDeployment.Spec.Repository).To(Equal("kuberik/github-controller-testing"))
 			Expect(githubDeployment.Spec.DeploymentName).To(Equal("test-deployment"))
 			Expect(githubDeployment.Spec.Environment).To(Equal("production"))
-			Expect(githubDeployment.Spec.RolloutGateSpec.Passing).ToNot(BeNil())
-			Expect(*githubDeployment.Spec.RolloutGateSpec.Passing).To(BeTrue())
 		})
 	})
 })
-
-// Helper function to create bool pointer
-func boolPtr(b bool) *bool {
-	return &b
-}

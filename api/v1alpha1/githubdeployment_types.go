@@ -19,8 +19,6 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -44,10 +42,6 @@ type GitHubDeploymentSpec struct {
 	// +optional
 	Environment string `json:"environment,omitempty"`
 
-	// Ref is the Git reference for the deployment (e.g., "main", "develop")
-	// +optional
-	Ref string `json:"ref,omitempty"`
-
 	// Description is the description of the GitHub deployment
 	// +optional
 	Description string `json:"description,omitempty"`
@@ -67,10 +61,6 @@ type GitHubDeploymentSpec struct {
 	// GitHubTokenSecret is the name of the Kubernetes Secret containing the GitHub token
 	// +optional
 	GitHubTokenSecret string `json:"githubTokenSecret,omitempty"`
-
-	// RolloutGateSpec defines the spec for the RolloutGate that will be created/updated
-	// +required
-	RolloutGateSpec kuberikrolloutv1alpha1.RolloutGateSpec `json:"rolloutGateSpec"`
 }
 
 // GitHubDeploymentStatus defines the observed state of GitHubDeployment.
@@ -90,10 +80,6 @@ type GitHubDeploymentStatus struct {
 	// CurrentVersion is the current version being deployed
 	// +optional
 	CurrentVersion string `json:"currentVersion,omitempty"`
-
-	// AllowedVersions is the list of versions that are allowed for deployment
-	// +optional
-	AllowedVersions []string `json:"allowedVersions,omitempty"`
 
 	// RolloutGateRef is a reference to the RolloutGate that was created/updated
 	// +optional

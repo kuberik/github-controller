@@ -26,10 +26,3 @@ spec:
 
   # GitHub token configuration
   githubTokenSecret: "github-token"
-
-  # RolloutGate configuration
-  rolloutGateSpec:
-    passing: true
-    allowedVersions:
-      - "v1.0.0"
-      - "v1.1.0"

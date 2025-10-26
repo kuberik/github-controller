@@ -85,17 +85,9 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Create deployment status based on RolloutGate state
-	var statusState string
-	var statusDescription string
-
-	if githubDeployment.Spec.RolloutGateSpec.Passing != nil && *githubDeployment.Spec.RolloutGateSpec.Passing {
-		statusState = "success"
-		statusDescription = fmt.Sprintf("GitHubDeployment %s is passing", githubDeployment.Name)
-	} else {
-		statusState = "failure"
-		statusDescription = fmt.Sprintf("GitHubDeployment %s is not passing", githubDeployment.Name)
-	}
+	// Create deployment status (always success initially)
+	statusState := "success"
+	statusDescription := fmt.Sprintf("GitHubDeployment %s ready", githubDeployment.Name)
 
 	// Create deployment status
 	if err := r.createDeploymentStatus(ctx, githubClient, githubDeployment, *deploymentID, statusState, statusDescription); err != nil {
@@ -115,7 +107,7 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Check dependencies and update allowed versions
+	// Check dependencies and update allowed versions on RolloutGate
 	if err := r.updateAllowedVersionsFromDependencies(ctx, githubDeployment, githubClient); err != nil {
 		log.Error(err, "Failed to update allowed versions from dependencies")
 		return ctrl.Result{}, err
@@ -301,22 +293,11 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 
 // createOrUpdateRolloutGate creates or updates the RolloutGate based on the GitHubDeployment spec
 func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment) error {
-	rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      githubDeployment.Name + "-gate",
-			Namespace: githubDeployment.Namespace,
-		},
-		Spec: githubDeployment.Spec.RolloutGateSpec,
-	}
-
-	// Set the RolloutRef to point to the referenced Rollout
-	rolloutGate.Spec.RolloutRef = &githubDeployment.Spec.RolloutRef
-
 	// Try to get existing RolloutGate
 	existingRolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      rolloutGate.Name,
-		Namespace: rolloutGate.Namespace,
+		Name:      githubDeployment.Name + "-gate",
+		Namespace: githubDeployment.Namespace,
 	}, existingRolloutGate)
 
 	if err != nil {
@@ -324,19 +305,31 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 			return fmt.Errorf("failed to get existing RolloutGate: %w", err)
 		}
 		// RolloutGate doesn't exist, create it
+		rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      githubDeployment.Name + "-gate",
+				Namespace: githubDeployment.Namespace,
+			},
+			Spec: kuberikrolloutv1alpha1.RolloutGateSpec{
+				RolloutRef: &githubDeployment.Spec.RolloutRef,
+			},
+		}
 		if err := r.Create(ctx, rolloutGate); err != nil {
 			return fmt.Errorf("failed to create RolloutGate: %w", err)
 		}
+		existingRolloutGate = rolloutGate
 	} else {
-		// RolloutGate exists, update it
-		existingRolloutGate.Spec = rolloutGate.Spec
-		if err := r.Update(ctx, existingRolloutGate); err != nil {
-			return fmt.Errorf("failed to update RolloutGate: %w", err)
+		// RolloutGate exists, ensure RolloutRef is set (don't overwrite other fields)
+		if existingRolloutGate.Spec.RolloutRef == nil || existingRolloutGate.Spec.RolloutRef.Name != githubDeployment.Spec.RolloutRef.Name {
+			existingRolloutGate.Spec.RolloutRef = &githubDeployment.Spec.RolloutRef
+			if err := r.Update(ctx, existingRolloutGate); err != nil {
+				return fmt.Errorf("failed to update RolloutGate: %w", err)
+			}
 		}
 	}
 
 	// Update the RolloutGateRef in GitHubDeployment status
-	rolloutGateRef := &corev1.LocalObjectReference{Name: rolloutGate.Name}
+	rolloutGateRef := &corev1.LocalObjectReference{Name: existingRolloutGate.Name}
 	if githubDeployment.Status.RolloutGateRef == nil || githubDeployment.Status.RolloutGateRef.Name != rolloutGateRef.Name {
 		githubDeployment.Status.RolloutGateRef = rolloutGateRef
 		return r.Status().Update(ctx, githubDeployment)
@@ -345,7 +338,7 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 	return nil
 }
 
-// updateAllowedVersionsFromDependencies checks GitHub deployment dependencies and updates allowed versions
+// updateAllowedVersionsFromDependencies checks GitHub deployment dependencies and updates allowed versions on RolloutGate
 func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment, client *github.Client) error {
 	if len(githubDeployment.Spec.Dependencies) == 0 {
 		return nil
@@ -390,10 +383,31 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 		}
 	}
 
-	// Update allowed versions in GitHubDeployment status
-	if !r.slicesEqual(githubDeployment.Status.AllowedVersions, allowedVersions) {
-		githubDeployment.Status.AllowedVersions = allowedVersions
-		return r.Status().Update(ctx, githubDeployment)
+	// Update allowed versions on RolloutGate
+	if githubDeployment.Status.RolloutGateRef == nil {
+		return nil
+	}
+
+	rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      githubDeployment.Status.RolloutGateRef.Name,
+		Namespace: githubDeployment.Namespace,
+	}, rolloutGate)
+	if err != nil {
+		return fmt.Errorf("failed to get RolloutGate: %w", err)
+	}
+
+	// Check if allowedVersions need to be updated
+	currentAllowedVersions := []string{}
+	if rolloutGate.Spec.AllowedVersions != nil {
+		currentAllowedVersions = *rolloutGate.Spec.AllowedVersions
+	}
+
+	if !r.slicesEqual(currentAllowedVersions, allowedVersions) {
+		rolloutGate.Spec.AllowedVersions = &allowedVersions
+		if err := r.Update(ctx, rolloutGate); err != nil {
+			return fmt.Errorf("failed to update RolloutGate allowedVersions: %w", err)
+		}
 	}
 
 	return nil

@@ -62,10 +62,6 @@ spec:
                 description: GitHubTokenSecret is the name of the Kubernetes Secret
                   containing the GitHub token
                 type: string
-              ref:
-                description: Ref is the Git reference for the deployment (e.g., "main",
-                  "develop")
-                type: string
               repository:
                 description: Repository is the GitHub repository in format "owner/repo"
                 type: string
@@ -74,40 +70,6 @@ spec:
                 items:
                   type: string
                 type: array
-              rolloutGateSpec:
-                description: RolloutGateSpec defines the spec for the RolloutGate
-                  that will be created/updated
-                properties:
-                  allowedVersions:
-                    description: AllowedVersions is a list of versions that Rollout
-                      can be updated to.
-                    items:
-                      type: string
-                    type: array
-                  passing:
-                    default: true
-                    description: Passing is true if the RolloutGate is passing.
-                    type: boolean
-                  rolloutRef:
-                    description: |-
-                      LocalObjectReference contains enough information to let you locate the
-                      referenced object inside the same namespace.
-                    properties:
-                      name:
-                        default: ""
-                        description: |-
-                          Name of the referent.
-                          This field is effectively required, but due to backwards compatibility is
-                          allowed to be empty. Instances of this type with an empty value here are
-                          almost certainly wrong.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                        type: string
-                    type: object
-                    x-kubernetes-map-type: atomic
-                required:
-                - passing
-                - rolloutRef
-                type: object
               rolloutRef:
                 description: RolloutRef is a reference to the Rollout that this GitHubDeployment
                   manages
@@ -126,18 +88,11 @@ spec:
             required:
             - deploymentName
             - repository
-            - rolloutGateSpec
             - rolloutRef
             type: object
           status:
             description: status defines the observed state of GitHubDeployment
             properties:
-              allowedVersions:
-                description: AllowedVersions is the list of versions that are allowed
-                  for deployment
-                items:
-                  type: string
-                type: array
               conditions:
                 description: |-
                   conditions represent the current state of the GitHubDeployment resource.
