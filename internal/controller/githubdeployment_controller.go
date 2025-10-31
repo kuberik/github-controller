@@ -293,35 +293,87 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 
 // createOrUpdateRolloutGate creates or updates the RolloutGate based on the GitHubDeployment spec
 func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment) error {
-	// Try to get existing RolloutGate
-	existingRolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      githubDeployment.Name + "-gate",
-		Namespace: githubDeployment.Namespace,
-	}, existingRolloutGate)
+	// List all RolloutGates in the namespace to find one owned by this GitHubDeployment
+	rolloutGateList := &kuberikrolloutv1alpha1.RolloutGateList{}
+	if err := r.List(ctx, rolloutGateList, client.InNamespace(githubDeployment.Namespace)); err != nil {
+		return fmt.Errorf("failed to list RolloutGates: %w", err)
+	}
 
-	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get existing RolloutGate: %w", err)
+	// Find existing RolloutGate owned by this GitHubDeployment
+	var existingRolloutGate *kuberikrolloutv1alpha1.RolloutGate
+	for i := range rolloutGateList.Items {
+		gate := &rolloutGateList.Items[i]
+		for _, ownerRef := range gate.OwnerReferences {
+			if ownerRef.Kind == "GitHubDeployment" &&
+				ownerRef.APIVersion == kuberikv1alpha1.GroupVersion.String() &&
+				ownerRef.Name == githubDeployment.Name {
+				// If UID is set, it must match; otherwise match by name and kind only
+				if ownerRef.UID == "" || ownerRef.UID == githubDeployment.UID {
+					existingRolloutGate = gate
+					break
+				}
+			}
 		}
+		if existingRolloutGate != nil {
+			break
+		}
+	}
+
+	if existingRolloutGate == nil {
 		// RolloutGate doesn't exist, create it
 		rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      githubDeployment.Name + "-gate",
-				Namespace: githubDeployment.Namespace,
+				GenerateName: "ghd-",
+				Namespace:    githubDeployment.Namespace,
 			},
 			Spec: kuberikrolloutv1alpha1.RolloutGateSpec{
 				RolloutRef: &githubDeployment.Spec.RolloutRef,
 			},
 		}
+
+		// Set owner reference
+		if err := ctrl.SetControllerReference(githubDeployment, rolloutGate, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set owner reference: %w", err)
+		}
+
 		if err := r.Create(ctx, rolloutGate); err != nil {
 			return fmt.Errorf("failed to create RolloutGate: %w", err)
 		}
 		existingRolloutGate = rolloutGate
 	} else {
-		// RolloutGate exists, ensure RolloutRef is set (don't overwrite other fields)
+		// RolloutGate exists, ensure owner reference and RolloutRef are up to date
+		needsUpdate := false
+
+		// Check and update owner reference if needed
+		ownerRefFound := false
+		for i := range existingRolloutGate.OwnerReferences {
+			if existingRolloutGate.OwnerReferences[i].Kind == "GitHubDeployment" &&
+				existingRolloutGate.OwnerReferences[i].APIVersion == kuberikv1alpha1.GroupVersion.String() &&
+				existingRolloutGate.OwnerReferences[i].Name == githubDeployment.Name {
+				ownerRefFound = true
+				if existingRolloutGate.OwnerReferences[i].UID != githubDeployment.UID {
+					// Update owner reference UID if it doesn't match
+					existingRolloutGate.OwnerReferences[i].UID = githubDeployment.UID
+					needsUpdate = true
+				}
+				break
+			}
+		}
+		if !ownerRefFound {
+			// Owner reference missing, set it
+			if err := ctrl.SetControllerReference(githubDeployment, existingRolloutGate, r.Scheme); err != nil {
+				return fmt.Errorf("failed to set owner reference: %w", err)
+			}
+			needsUpdate = true
+		}
+
+		// Ensure RolloutRef is set (don't overwrite other fields)
 		if existingRolloutGate.Spec.RolloutRef == nil || existingRolloutGate.Spec.RolloutRef.Name != githubDeployment.Spec.RolloutRef.Name {
 			existingRolloutGate.Spec.RolloutRef = &githubDeployment.Spec.RolloutRef
+			needsUpdate = true
+		}
+
+		if needsUpdate {
 			if err := r.Update(ctx, existingRolloutGate); err != nil {
 				return fmt.Errorf("failed to update RolloutGate: %w", err)
 			}
