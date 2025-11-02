@@ -13,7 +13,6 @@ spec:
   deploymentName: "myapp-production"
   environment: "production"
   ref: "main"
-  description: "Production deployment for myapp"
 
   # Dependencies and requirements
   dependencies:

@@ -48,9 +48,6 @@ spec:
               deploymentName:
                 description: DeploymentName is the name of the GitHub deployment
                 type: string
-              description:
-                description: Description is the description of the GitHub deployment
-                type: string
               environment:
                 description: Environment is the GitHub deployment environment (e.g.,
                   "production", "staging")

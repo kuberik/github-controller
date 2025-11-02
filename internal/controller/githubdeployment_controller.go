@@ -179,11 +179,14 @@ func (r *GitHubDeploymentReconciler) createOrUpdateGitHubDeployment(ctx context.
 		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
 	}
 
+	// Generate automatic description
+	description := fmt.Sprintf("Deployment %s to %s (ref: %s)", githubDeployment.Name, githubDeployment.Spec.Environment, *currentVersion)
+
 	// Prepare deployment request
 	deploymentRequest := &github.DeploymentRequest{
 		Ref:                   currentVersion,
 		Environment:           &githubDeployment.Spec.Environment,
-		Description:           &githubDeployment.Spec.Description,
+		Description:           &description,
 		RequiredContexts:      &githubDeployment.Spec.RequiredContexts,
 		ProductionEnvironment: github.Bool(githubDeployment.Spec.Environment == "production"),
 	}

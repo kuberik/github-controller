@@ -42,10 +42,6 @@ type GitHubDeploymentSpec struct {
 	// +optional
 	Environment string `json:"environment,omitempty"`
 
-	// Description is the description of the GitHub deployment
-	// +optional
-	Description string `json:"description,omitempty"`
-
 	// Dependencies is a list of deployment names that this deployment depends on
 	// +optional
 	Dependencies []string `json:"dependencies,omitempty"`

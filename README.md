@@ -61,7 +61,6 @@ spec:
 
 - `kuberik.com/environment`: GitHub deployment environment (default: "production")
 - `kuberik.com/ref`: Git reference (branch, tag, or SHA)
-- `kuberik.com/description`: Description for the deployment
 - `kuberik.com/auto-merge`: Whether to automatically merge the deployment
 - `kuberik.com/dependencies`: Comma-separated list of deployment dependencies
 - `kuberik.com/required-contexts`: Comma-separated list of required status check contexts
@@ -177,7 +176,6 @@ type GitHubConfig struct {
     Dependencies      []string `json:"dependencies,omitempty"`
     Environment       string   `json:"environment,omitempty"`
     Ref               string   `json:"ref,omitempty"`
-    Description       string   `json:"description,omitempty"`
     RequiredContexts  []string `json:"requiredContexts,omitempty"`
 }
 ```
