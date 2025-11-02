@@ -184,7 +184,6 @@ func (r *GitHubDeploymentReconciler) createOrUpdateGitHubDeployment(ctx context.
 		Ref:                   currentVersion,
 		Environment:           &githubDeployment.Spec.Environment,
 		Description:           &githubDeployment.Spec.Description,
-		AutoMerge:             &githubDeployment.Spec.AutoMerge,
 		RequiredContexts:      &githubDeployment.Spec.RequiredContexts,
 		ProductionEnvironment: github.Bool(githubDeployment.Spec.Environment == "production"),
 	}

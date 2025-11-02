@@ -178,7 +178,6 @@ type GitHubConfig struct {
     Environment       string   `json:"environment,omitempty"`
     Ref               string   `json:"ref,omitempty"`
     Description       string   `json:"description,omitempty"`
-    AutoMerge         bool     `json:"autoMerge,omitempty"`
     RequiredContexts  []string `json:"requiredContexts,omitempty"`
 }
 ```

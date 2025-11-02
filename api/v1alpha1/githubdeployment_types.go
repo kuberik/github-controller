@@ -46,10 +46,6 @@ type GitHubDeploymentSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// AutoMerge enables automatic merging for the deployment
-	// +optional
-	AutoMerge bool `json:"autoMerge,omitempty"`
-
 	// Dependencies is a list of deployment names that this deployment depends on
 	// +optional
 	Dependencies []string `json:"dependencies,omitempty"`

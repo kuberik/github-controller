@@ -39,9 +39,6 @@ spec:
           spec:
             description: spec defines the desired state of GitHubDeployment
             properties:
-              autoMerge:
-                description: AutoMerge enables automatic merging for the deployment
-                type: boolean
               dependencies:
                 description: Dependencies is a list of deployment names that this
                   deployment depends on
