@@ -17,7 +17,10 @@ limitations under the License.
 package controller
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -57,6 +60,10 @@ var _ = BeforeSuite(func() {
 			filepath.Join("..", "..", "config", "crd", "bases"),
 		},
 		ErrorIfCRDPathMissing: true,
+	}
+
+	if res, err := exec.Command("gh", "auth", "token").Output(); err == nil {
+		os.Setenv("GITHUB_TOKEN", strings.TrimSpace(string(res)))
 	}
 
 	var err error

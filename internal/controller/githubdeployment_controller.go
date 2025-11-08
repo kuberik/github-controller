@@ -30,7 +30,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
@@ -78,20 +80,10 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Create or update GitHub deployment
-	deploymentID, deploymentURL, err := r.createOrUpdateGitHubDeployment(ctx, githubClient, githubDeployment, rollout)
+	// Sync entire rollout history with GitHub deployments and statuses
+	deploymentID, deploymentURL, err := r.syncDeploymentHistory(ctx, githubClient, githubDeployment, rollout)
 	if err != nil {
-		log.Error(err, "Failed to create or update GitHub deployment")
-		return ctrl.Result{}, err
-	}
-
-	// Create deployment status (always success initially)
-	statusState := "success"
-	statusDescription := fmt.Sprintf("GitHubDeployment %s ready", githubDeployment.Name)
-
-	// Create deployment status
-	if err := r.createDeploymentStatus(ctx, githubClient, githubDeployment, *deploymentID, statusState, statusDescription); err != nil {
-		log.Error(err, "Failed to create deployment status")
+		log.Error(err, "Failed to sync deployment history")
 		return ctrl.Result{}, err
 	}
 
@@ -121,8 +113,39 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *GitHubDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kuberikv1alpha1.GitHubDeployment{}).
+		Watches(
+			&kuberikrolloutv1alpha1.Rollout{},
+			handler.EnqueueRequestsFromMapFunc(r.rolloutToGitHubDeployment),
+		).
 		Named("githubdeployment").
 		Complete(r)
+}
+
+// rolloutToGitHubDeployment maps a Rollout to all GitHubDeployments that reference it
+func (r *GitHubDeploymentReconciler) rolloutToGitHubDeployment(ctx context.Context, obj client.Object) []reconcile.Request {
+	rollout := obj.(*kuberikrolloutv1alpha1.Rollout)
+	requests := []reconcile.Request{}
+
+	// List all GitHubDeployments in the same namespace
+	githubDeploymentList := &kuberikv1alpha1.GitHubDeploymentList{}
+	if err := r.List(ctx, githubDeploymentList, client.InNamespace(rollout.Namespace)); err != nil {
+		return requests
+	}
+
+	// Find all GitHubDeployments that reference this Rollout
+	for i := range githubDeploymentList.Items {
+		githubDeployment := &githubDeploymentList.Items[i]
+		if githubDeployment.Spec.RolloutRef.Name == rollout.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      githubDeployment.Name,
+					Namespace: githubDeployment.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
 }
 
 // getReferencedRollout gets the Rollout referenced by the GitHubDeployment
@@ -189,6 +212,7 @@ func (r *GitHubDeploymentReconciler) createOrUpdateGitHubDeployment(ctx context.
 		Description:           &description,
 		RequiredContexts:      &githubDeployment.Spec.RequiredContexts,
 		ProductionEnvironment: github.Bool(githubDeployment.Spec.Environment == "production"),
+		AutoMerge:             github.Bool(false),
 	}
 
 	// If we already have a deployment ID, check if we need to create a new deployment
@@ -291,6 +315,119 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 	}
 
 	return nil
+}
+
+// syncDeploymentHistory ensures a GitHub deployment exists for each rollout history entry
+// and posts a DeploymentStatus matching each entry's bake status. It returns the latest
+// deployment's ID and URL for status bookkeeping on the CR.
+func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, gh *github.Client, ghd *kuberikv1alpha1.GitHubDeployment, rollout *kuberikrolloutv1alpha1.Rollout) (*int64, string, error) {
+	// Parse repository
+	parts := strings.Split(ghd.Spec.Repository, "/")
+	if len(parts) != 2 {
+		return nil, "", fmt.Errorf("invalid repository format: %s", ghd.Spec.Repository)
+	}
+	owner, repo := parts[0], parts[1]
+
+	// List existing deployments for this environment to avoid duplicate creations
+	deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{Environment: ghd.Spec.Environment})
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to list deployments: %w", err)
+	}
+	refToDeployment := map[string]*github.Deployment{}
+	for _, d := range deployments {
+		if d.Ref != nil {
+			refToDeployment[*d.Ref] = d
+		}
+	}
+
+	// Iterate history from oldest to newest so states evolve in order
+	for i := len(rollout.Status.History) - 1; i >= 0; i-- {
+		h := rollout.Status.History[i]
+		if h.Version.Revision == nil || *h.Version.Revision == "" {
+			continue
+		}
+		ref := *h.Version.Revision
+
+		dep := refToDeployment[ref]
+		if dep == nil {
+			// Create missing deployment for this ref
+			req := &github.DeploymentRequest{
+				Ref:                   &ref,
+				Environment:           &ghd.Spec.Environment,
+				Description:           h.Message,
+				RequiredContexts:      &ghd.Spec.RequiredContexts,
+				ProductionEnvironment: github.Bool(ghd.Spec.Environment == "production"),
+				AutoMerge:             github.Bool(false),
+			}
+			created, _, err := gh.Repositories.CreateDeployment(ctx, owner, repo, req)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to create GitHub deployment: %w", err)
+			}
+			dep = created
+			if dep.Ref != nil {
+				refToDeployment[*dep.Ref] = dep
+			}
+		}
+
+		// Determine desired GH status for this history entry
+		ghState, ghDesc := mapBakeToGitHubState(h.BakeStatus, h.BakeStatusMessage)
+
+		// Get latest status for this deployment to avoid duplicate posts
+		statuses, _, err := gh.Repositories.ListDeploymentStatuses(ctx, owner, repo, dep.GetID(), &github.ListOptions{PerPage: 1})
+		if err == nil && len(statuses) > 0 {
+			if statuses[0].State != nil && *statuses[0].State == ghState && statuses[0].Description != nil && *statuses[0].Description == ghDesc {
+				// Up-to-date, skip
+			} else {
+				if err := r.createDeploymentStatus(ctx, gh, ghd, dep.GetID(), ghState, ghDesc); err != nil {
+					return nil, "", err
+				}
+			}
+		} else {
+			if err := r.createDeploymentStatus(ctx, gh, ghd, dep.GetID(), ghState, ghDesc); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+
+	// Latest is history[0] if present - we need at least one valid deployment
+	if len(rollout.Status.History) == 0 {
+		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
+	}
+
+	latest := rollout.Status.History[0]
+	if latest.Version.Revision == nil || *latest.Version.Revision == "" {
+		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
+	}
+
+	if dep := refToDeployment[*latest.Version.Revision]; dep != nil {
+		return dep.ID, dep.GetURL(), nil
+	}
+
+	// This shouldn't happen if we processed history correctly, but handle it
+	return nil, "", fmt.Errorf("failed to find or create deployment for revision %s", *latest.Version.Revision)
+}
+
+// mapBakeToGitHubState maps bake status/message to GitHub DeploymentStatus state and description
+func mapBakeToGitHubState(bakeStatus *string, bakeMsg *string) (string, string) {
+	var status, msg string
+	if bakeStatus != nil {
+		status = *bakeStatus
+	}
+	if bakeMsg != nil {
+		msg = *bakeMsg
+	}
+	switch status {
+	case "Succeeded":
+		return "success", fmt.Sprintf("Bake succeeded: %s", msg)
+	case "Failed", "Cancelled":
+		return "failure", fmt.Sprintf("Bake failed: %s", msg)
+	case "InProgress":
+		return "in_progress", fmt.Sprintf("Baking in progress: %s", msg)
+	case "None", "":
+		return "queued", "Waiting for bake to start"
+	default:
+		return "pending", msg
+	}
 }
 
 // createOrUpdateRolloutGate creates or updates the RolloutGate based on the GitHubDeployment spec

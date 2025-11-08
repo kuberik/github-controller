@@ -261,6 +261,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
 
 			// Update the rollout to set the status
+			bakeStatus := "Succeeded"
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
@@ -268,7 +269,8 @@ var _ = Describe("GitHubDeployment Controller", func() {
 							Tag:      "v1.0.0",
 							Revision: &revision,
 						},
-						Timestamp: metav1.Now(),
+						BakeStatus: &bakeStatus,
+						Timestamp:  metav1.Now(),
 					},
 				},
 			}
@@ -305,18 +307,6 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
-			By("Verifying RolloutGate was created")
-			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
-			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-gate",
-				Namespace: GitHubDeploymentNamespace,
-			}, rolloutGate)).To(Succeed())
-
-			Expect(rolloutGate.Spec.RolloutRef).ToNot(BeNil())
-			Expect(rolloutGate.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(rolloutGate.Spec.Passing).ToNot(BeNil())
-			Expect(*rolloutGate.Spec.Passing).To(BeTrue())
-
 			By("Verifying GitHub deployment was created")
 			// Get the updated GitHubDeployment to check status
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -331,7 +321,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(updatedGitHubDeployment.Status.GitHubDeploymentURL).ToNot(BeEmpty())
 			Expect(updatedGitHubDeployment.Status.CurrentVersion).To(Equal(revision))
 			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
-			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(Equal("test-github-deployment-gate"))
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
+			By("Verifying RolloutGate was created")
+			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
+				Namespace: GitHubDeploymentNamespace,
+			}, rolloutGate)).To(Succeed())
+
+			Expect(rolloutGate.Spec.RolloutRef).ToNot(BeNil())
+			Expect(rolloutGate.Spec.RolloutRef.Name).To(Equal("test-rollout"))
+			Expect(rolloutGate.Spec.Passing).ToNot(BeNil())
+			Expect(*rolloutGate.Spec.Passing).To(BeTrue())
 
 			By("Verifying GitHub deployment exists via API")
 			token := os.Getenv("GITHUB_TOKEN")
@@ -543,10 +545,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-update",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
 			// Verify initial RolloutGate was created
 			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-update-gate",
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
@@ -817,7 +828,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			Expect(updatedGitHubDeployment.Status.CurrentVersion).To(Equal(revision))
 			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
-			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(Equal("test-github-deployment-status-gate"))
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
 		})
 
 		It("Should update allowed versions from dependencies", func() {
@@ -913,10 +924,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
 			By("Verifying allowed versions were updated from dependencies on RolloutGate")
 			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-deps-gate",
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
@@ -1038,10 +1058,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-multi-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
 			By("Verifying allowed versions include versions from all dependencies on RolloutGate")
 			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-multi-deps-gate",
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
@@ -1148,10 +1177,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-failed-dep",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
 			By("Verifying failed dependency doesn't add to allowed versions on RolloutGate")
 			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-failed-dep-gate",
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
@@ -1233,10 +1271,19 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
 
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-no-deps",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef.Name).To(HavePrefix("ghd-"))
+
 			By("Verifying allowed versions is empty when no dependencies on RolloutGate")
 			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
-				Name:      "test-github-deployment-no-deps-gate",
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
