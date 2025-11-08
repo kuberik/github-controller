@@ -59,6 +59,12 @@ spec:
               repository:
                 description: Repository is the GitHub repository in format "owner/repo"
                 type: string
+              requeueInterval:
+                description: |-
+                  RequeueInterval specifies how often the controller should reconcile this GitHubDeployment
+                  If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
+                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                type: string
               requiredContexts:
                 description: RequiredContexts is a list of required status check contexts
                 items:

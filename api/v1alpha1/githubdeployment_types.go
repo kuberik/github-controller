@@ -53,6 +53,12 @@ type GitHubDeploymentSpec struct {
 	// GitHubTokenSecret is the name of the Kubernetes Secret containing the GitHub token
 	// +optional
 	GitHubTokenSecret string `json:"githubTokenSecret,omitempty"`
+
+	// RequeueInterval specifies how often the controller should reconcile this GitHubDeployment
+	// If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
+	// +optional
+	// +kubebuilder:validation:Pattern=^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+	RequeueInterval string `json:"requeueInterval,omitempty"`
 }
 
 // GitHubDeploymentStatus defines the observed state of GitHubDeployment.

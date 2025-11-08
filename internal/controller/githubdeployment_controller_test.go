@@ -305,7 +305,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying GitHub deployment was created")
 			// Get the updated GitHubDeployment to check status
@@ -439,7 +439,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying initial GitHub deployment status is success")
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -543,7 +543,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			// Get the updated GitHubDeployment to find the RolloutGate name
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -817,7 +817,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying GitHubDeployment status was updated")
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -922,7 +922,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			// Get the updated GitHubDeployment to find the RolloutGate name
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -1056,7 +1056,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			// Get the updated GitHubDeployment to find the RolloutGate name
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -1175,7 +1175,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			// Get the updated GitHubDeployment to find the RolloutGate name
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -1269,7 +1269,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			result, err := reconciler.Reconcile(context.Background(), req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(time.Minute * 5))
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			// Get the updated GitHubDeployment to find the RolloutGate name
 			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
@@ -1291,6 +1291,78 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			if rolloutGate.Spec.AllowedVersions != nil {
 				Expect(*rolloutGate.Spec.AllowedVersions).To(BeEmpty())
 			}
+		})
+
+		It("Should use custom requeue interval when specified", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating Rollout with deployment history")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-requeue",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			// Update the rollout to set the status
+			bakeStatus := "Succeeded"
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						BakeStatus: &bakeStatus,
+						Timestamp:  metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment with custom requeue interval")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-requeue",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-requeue",
+					},
+					Repository:      "kuberik/github-controller-testing",
+					DeploymentName:  "test-deployment-requeue",
+					Environment:     "production",
+					RequeueInterval: "3m",
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-requeue",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(3 * time.Minute))
 		})
 	})
 })

@@ -105,8 +105,17 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Requeue every 5 minutes to keep status updated
-	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	// Requeue at configured interval (default 1 minute) to keep status updated
+	requeueInterval := time.Minute // default
+	if githubDeployment.Spec.RequeueInterval != "" {
+		parsed, err := time.ParseDuration(githubDeployment.Spec.RequeueInterval)
+		if err != nil {
+			log.Error(err, "Invalid RequeueInterval, using default", "interval", githubDeployment.Spec.RequeueInterval)
+		} else {
+			requeueInterval = parsed
+		}
+	}
+	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
