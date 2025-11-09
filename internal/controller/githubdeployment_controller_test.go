@@ -844,11 +844,14 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			By("Creating staging deployment with success status")
 			// First create a dependency deployment (staging)
-			stagingRef := "main"
+			// Use a commit SHA as the revision (GitHub deployment ref)
+			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			stagingTag := "v1.0.0" // Tag that matches the staging revision
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String("staging"),
 				ProductionEnvironment: github.Bool(false),
+				AutoMerge:             github.Bool(false),
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -887,6 +890,13 @@ var _ = Describe("GitHubDeployment Controller", func() {
 							Revision: &revision,
 						},
 						Timestamp: metav1.Now(),
+					},
+				},
+				// Add releaseCandidates with staging revision mapped to tag
+				ReleaseCandidates: []kuberikrolloutv1alpha1.VersionInfo{
+					{
+						Tag:      stagingTag,
+						Revision: &stagingRef,
 					},
 				},
 			}
@@ -940,10 +950,10 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
-			// Should have the staging revision in allowed versions
+			// Should have the staging tag in allowed versions (not revision)
 			Expect(rolloutGate.Spec.AllowedVersions).ToNot(BeNil())
 			Expect(*rolloutGate.Spec.AllowedVersions).ToNot(BeEmpty())
-			Expect(*rolloutGate.Spec.AllowedVersions).To(ContainElement(stagingRef))
+			Expect(*rolloutGate.Spec.AllowedVersions).To(ContainElement(stagingTag))
 
 			// Clean up staging deployment
 			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID())
@@ -961,11 +971,14 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			githubClient := github.NewClient(tc)
 
 			By("Creating first dependency deployment (staging) with success status")
-			stagingRef := "main"
+			// Use a commit SHA as the revision (GitHub deployment ref)
+			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			stagingTag := "v1.0.0"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String("staging"),
 				ProductionEnvironment: github.Bool(false),
+				AutoMerge:             github.Bool(false),
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -979,11 +992,13 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating second dependency deployment (qa) with success status")
-			qaRef := "main"
+			// Use same commit SHA as staging (same revision, same tag)
+			qaRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			qaDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(qaRef),
 				Environment:           github.String("qa"),
 				ProductionEnvironment: github.Bool(false),
+				AutoMerge:             github.Bool(false),
 			}
 			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", qaDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1021,6 +1036,13 @@ var _ = Describe("GitHubDeployment Controller", func() {
 							Revision: &revision,
 						},
 						Timestamp: metav1.Now(),
+					},
+				},
+				// Add releaseCandidates with revisions mapped to tags
+				ReleaseCandidates: []kuberikrolloutv1alpha1.VersionInfo{
+					{
+						Tag:      stagingTag,
+						Revision: &stagingRef,
 					},
 				},
 			}
@@ -1074,11 +1096,10 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
-			// Should have both staging and qa revisions in allowed versions
+			// Should have the tag in allowed versions (both staging and qa use same revision, so same tag)
 			Expect(rolloutGate.Spec.AllowedVersions).ToNot(BeNil())
 			Expect(*rolloutGate.Spec.AllowedVersions).ToNot(BeEmpty())
-			Expect(*rolloutGate.Spec.AllowedVersions).To(ContainElement(stagingRef))
-			Expect(*rolloutGate.Spec.AllowedVersions).To(ContainElement(qaRef))
+			Expect(*rolloutGate.Spec.AllowedVersions).To(ContainElement(stagingTag))
 
 			// Clean up deployments
 			githubClient.Repositories.DeleteDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID())
@@ -1097,11 +1118,13 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			githubClient := github.NewClient(tc)
 
 			By("Creating dependency deployment with failure status")
-			failedRef := "main"
+			// Use a commit SHA as the revision (GitHub deployment ref)
+			failedRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			failedDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(failedRef),
 				Environment:           github.String("staging"),
 				ProductionEnvironment: github.Bool(false),
+				AutoMerge:             github.Bool(false),
 			}
 			failedDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", failedDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1193,10 +1216,11 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Namespace: GitHubDeploymentNamespace,
 			}, rolloutGate)).To(Succeed())
 
-			// Should not have the failed revision in allowed versions (since it failed)
-			// The ref might be "main" but it should not be in AllowedVersions because it has failure status
+			// Should not have the failed tag in allowed versions (since it failed)
+			// Failed deployments should not add their tags to AllowedVersions
 			if rolloutGate.Spec.AllowedVersions != nil {
-				Expect(*rolloutGate.Spec.AllowedVersions).ToNot(ContainElement(failedRef))
+				// Even if the revision exists in releaseCandidates, it shouldn't be added because status is failure
+				Expect(*rolloutGate.Spec.AllowedVersions).To(BeEmpty())
 			}
 
 			// Clean up deployment

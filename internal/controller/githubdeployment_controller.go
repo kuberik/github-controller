@@ -539,9 +539,24 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 }
 
 // updateAllowedVersionsFromDependencies checks GitHub deployment dependencies and updates allowed versions on RolloutGate
+// It matches GitHub deployment revisions to tags in the Rollout's releaseCandidates and sets those tags in AllowedVersions
 func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment, client *github.Client) error {
 	if len(githubDeployment.Spec.Dependencies) == 0 {
 		return nil
+	}
+
+	// Get the referenced Rollout to access releaseCandidates
+	rollout, err := r.getReferencedRollout(ctx, githubDeployment)
+	if err != nil {
+		return fmt.Errorf("failed to get referenced Rollout: %w", err)
+	}
+
+	// Build a map of revision -> tag from releaseCandidates
+	revisionToTag := make(map[string]string)
+	for _, candidate := range rollout.Status.ReleaseCandidates {
+		if candidate.Revision != nil && *candidate.Revision != "" && candidate.Tag != "" {
+			revisionToTag[*candidate.Revision] = candidate.Tag
+		}
 	}
 
 	// Parse repository
@@ -551,7 +566,8 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 	}
 	owner, repo := parts[0], parts[1]
 
-	var allowedVersions []string
+	var allowedTags []string
+	seenTags := make(map[string]bool) // Avoid duplicates
 
 	// Check each dependency
 	for _, depName := range githubDeployment.Spec.Dependencies {
@@ -575,7 +591,14 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 			for _, status := range statuses {
 				if status.State != nil && *status.State == "success" {
 					if deployment.Ref != nil {
-						allowedVersions = append(allowedVersions, *deployment.Ref)
+						// Match revision to tag in releaseCandidates
+						if tag, found := revisionToTag[*deployment.Ref]; found {
+							// Only add if not already seen
+							if !seenTags[tag] {
+								allowedTags = append(allowedTags, tag)
+								seenTags[tag] = true
+							}
+						}
 					}
 					break
 				}
@@ -589,7 +612,7 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 	}
 
 	rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
-	err := r.Get(ctx, types.NamespacedName{
+	err = r.Get(ctx, types.NamespacedName{
 		Name:      githubDeployment.Status.RolloutGateRef.Name,
 		Namespace: githubDeployment.Namespace,
 	}, rolloutGate)
@@ -603,8 +626,8 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 		currentAllowedVersions = *rolloutGate.Spec.AllowedVersions
 	}
 
-	if !r.slicesEqual(currentAllowedVersions, allowedVersions) {
-		rolloutGate.Spec.AllowedVersions = &allowedVersions
+	if !r.slicesEqual(currentAllowedVersions, allowedTags) {
+		rolloutGate.Spec.AllowedVersions = &allowedTags
 		if err := r.Update(ctx, rolloutGate); err != nil {
 			return fmt.Errorf("failed to update RolloutGate allowedVersions: %w", err)
 		}
