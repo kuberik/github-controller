@@ -1,8 +1,9 @@
 module github.com/kuberik/github-operator
 
-go 1.24.5
+go 1.25
 
 require (
+	github.com/bartventer/httpcache v0.12.0
 	github.com/google/go-github/v62 v62.0.0
 	github.com/kuberik/rollout-controller v0.4.0
 	github.com/onsi/ginkgo/v2 v2.22.0
