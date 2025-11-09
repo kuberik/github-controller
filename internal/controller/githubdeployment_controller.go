@@ -432,14 +432,14 @@ func mapBakeToGitHubState(bakeStatus *string, bakeMsg *string) (string, string) 
 		msg = *bakeMsg
 	}
 	switch status {
-	case "Succeeded":
+	case kuberikrolloutv1alpha1.BakeStatusSucceeded:
 		return "success", fmt.Sprintf("Bake succeeded: %s", msg)
-	case "Failed", "Cancelled":
+	case kuberikrolloutv1alpha1.BakeStatusFailed:
 		return "failure", fmt.Sprintf("Bake failed: %s", msg)
-	case "InProgress":
+	case kuberikrolloutv1alpha1.BakeStatusInProgress:
 		return "in_progress", fmt.Sprintf("Baking in progress: %s", msg)
-	case "None", "":
-		return "queued", "Waiting for bake to start"
+	case kuberikrolloutv1alpha1.BakeStatusCancelled:
+		return "inactive", fmt.Sprintf("Bake cancelled: %s", msg)
 	default:
 		return "pending", msg
 	}
