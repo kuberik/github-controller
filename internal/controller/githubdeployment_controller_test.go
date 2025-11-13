@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
@@ -127,6 +128,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 					Status: kuberikrolloutv1alpha1.RolloutStatus{
 						History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 							{
+								ID: k8sptr.To(int64(1)),
 								Version: kuberikrolloutv1alpha1.VersionInfo{
 									Tag:      "v1.0.0",
 									Revision: &revision,
@@ -147,6 +149,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 					Status: kuberikrolloutv1alpha1.RolloutStatus{
 						History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 							{
+								ID: k8sptr.To(int64(1)),
 								Version: kuberikrolloutv1alpha1.VersionInfo{
 									Tag: "v1.0.0",
 									// Revision is nil
@@ -265,6 +268,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -383,6 +387,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag:      "v1.0.0",
 								Revision: &revision,
@@ -400,6 +405,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -487,6 +493,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag:      "v1.0.0",
 								Revision: &revision,
@@ -504,6 +511,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -621,6 +629,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag: "v1.0.0",
 								// Revision is nil
@@ -638,6 +647,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rolloutNoRevision.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag: "v1.0.0",
 							// Revision is nil
@@ -761,6 +771,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag:      "v1.0.0",
 								Revision: &revision,
@@ -778,6 +789,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -885,6 +897,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -1031,6 +1044,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -1158,6 +1172,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -1253,6 +1268,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,
@@ -1345,6 +1361,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
 				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 					{
+						ID: k8sptr.To(int64(1)),
 						Version: kuberikrolloutv1alpha1.VersionInfo{
 							Tag:      "v1.0.0",
 							Revision: &revision,

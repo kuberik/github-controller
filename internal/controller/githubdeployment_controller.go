@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -38,6 +39,17 @@ import (
 	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
+
+// deploymentPayload represents the payload stored in GitHub deployments for mapping
+type deploymentPayload struct {
+	ID string `json:"id"` // Stored as string in JSON for consistency
+}
+
+// deploymentKey represents a unique key for mapping deployments by ID and environment
+type deploymentKey struct {
+	ID          string
+	Environment string
+}
 
 // GitHubDeploymentReconciler reconciles a GitHubDeployment object
 type GitHubDeploymentReconciler struct {
@@ -332,6 +344,27 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 	return nil
 }
 
+// extractDeploymentKey extracts the deployment key from a GitHub deployment's payload and environment
+func (r *GitHubDeploymentReconciler) extractDeploymentKey(dep *github.Deployment) *deploymentKey {
+	if len(dep.Payload) == 0 {
+		return nil
+	}
+
+	var payload deploymentPayload
+	if err := json.Unmarshal(dep.Payload, &payload); err != nil {
+		return nil
+	}
+
+	if payload.ID == "" || dep.Environment == nil {
+		return nil
+	}
+
+	return &deploymentKey{
+		ID:          payload.ID,
+		Environment: *dep.Environment,
+	}
+}
+
 // syncDeploymentHistory ensures a GitHub deployment exists for each rollout history entry
 // and posts a DeploymentStatus matching each entry's bake status. It returns the latest
 // deployment's ID and URL for status bookkeeping on the CR.
@@ -348,10 +381,13 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to list deployments: %w", err)
 	}
-	refToDeployment := map[string]*github.Deployment{}
+
+	// Map deployments by ID + environment from payload
+	keyToDeployment := make(map[deploymentKey]*github.Deployment)
 	for _, d := range deployments {
-		if d.Ref != nil {
-			refToDeployment[*d.Ref] = d
+		key := r.extractDeploymentKey(d)
+		if key != nil {
+			keyToDeployment[*key] = d
 		}
 	}
 
@@ -363,9 +399,30 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		}
 		ref := *h.Version.Revision
 
-		dep := refToDeployment[ref]
+		// Skip entries without an ID as we need it for unique mapping
+		if h.ID == nil {
+			continue
+		}
+		historyID := fmt.Sprintf("%d", *h.ID)
+
+		// Create key for this history entry using ID + environment
+		key := deploymentKey{
+			ID:          historyID,
+			Environment: ghd.Spec.Environment,
+		}
+
+		dep := keyToDeployment[key]
 		if dep == nil {
-			// Create missing deployment for this ref
+			// Create missing deployment for this history entry
+			// Create payload with ID for mapping
+			payload := deploymentPayload{
+				ID: historyID,
+			}
+			payloadJSON, err := json.Marshal(payload)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to marshal deployment payload: %w", err)
+			}
+
 			req := &github.DeploymentRequest{
 				Ref:                   &ref,
 				Environment:           &ghd.Spec.Environment,
@@ -373,19 +430,18 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 				RequiredContexts:      &ghd.Spec.RequiredContexts,
 				ProductionEnvironment: github.Bool(ghd.Spec.Environment == "production"),
 				AutoMerge:             github.Bool(false),
+				Payload:               payloadJSON,
 			}
 			created, _, err := gh.Repositories.CreateDeployment(ctx, owner, repo, req)
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to create GitHub deployment: %w", err)
 			}
 			dep = created
-			if dep.Ref != nil {
-				refToDeployment[*dep.Ref] = dep
-			}
+			keyToDeployment[key] = dep
 		}
 
 		// Determine desired GH status for this history entry
-		ghState, ghDesc := mapBakeToGitHubState(h.BakeStatus, h.BakeStatusMessage)
+		ghState, ghDesc := mapBakeToGitHubState(h.BakeStatus)
 
 		// Get latest status for this deployment to avoid duplicate posts
 		statuses, _, err := gh.Repositories.ListDeploymentStatuses(ctx, owner, repo, dep.GetID(), &github.ListOptions{PerPage: 1})
@@ -414,34 +470,41 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
 	}
 
-	if dep := refToDeployment[*latest.Version.Revision]; dep != nil {
+	if latest.ID == nil {
+		return nil, "", fmt.Errorf("no ID found in latest rollout history entry - ID field is required for GitHub deployments")
+	}
+
+	latestID := fmt.Sprintf("%d", *latest.ID)
+	latestKey := deploymentKey{
+		ID:          latestID,
+		Environment: ghd.Spec.Environment,
+	}
+
+	if dep := keyToDeployment[latestKey]; dep != nil {
 		return dep.ID, dep.GetURL(), nil
 	}
 
 	// This shouldn't happen if we processed history correctly, but handle it
-	return nil, "", fmt.Errorf("failed to find or create deployment for revision %s", *latest.Version.Revision)
+	return nil, "", fmt.Errorf("failed to find or create deployment for ID %s and environment %s", latestID, ghd.Spec.Environment)
 }
 
 // mapBakeToGitHubState maps bake status/message to GitHub DeploymentStatus state and description
-func mapBakeToGitHubState(bakeStatus *string, bakeMsg *string) (string, string) {
-	var status, msg string
+func mapBakeToGitHubState(bakeStatus *string) (string, string) {
+	var status string
 	if bakeStatus != nil {
 		status = *bakeStatus
 	}
-	if bakeMsg != nil {
-		msg = *bakeMsg
-	}
 	switch status {
 	case kuberikrolloutv1alpha1.BakeStatusSucceeded:
-		return "success", fmt.Sprintf("Bake succeeded: %s", msg)
+		return "success", "Bake succeeded"
 	case kuberikrolloutv1alpha1.BakeStatusFailed:
-		return "failure", fmt.Sprintf("Bake failed: %s", msg)
+		return "failure", "Bake failed"
 	case kuberikrolloutv1alpha1.BakeStatusInProgress:
-		return "in_progress", fmt.Sprintf("Baking in progress: %s", msg)
+		return "in_progress", "Baking in progress"
 	case kuberikrolloutv1alpha1.BakeStatusCancelled:
-		return "inactive", fmt.Sprintf("Bake cancelled: %s", msg)
+		return "inactive", "Bake cancelled"
 	default:
-		return "pending", msg
+		return "pending", "Deployment in progress"
 	}
 }
 

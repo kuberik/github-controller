@@ -2,10 +2,11 @@ apiVersion: vendir.k14s.io/v1alpha1
 directories:
 - contents:
   - git:
-      commitTitle: 'chore: release version v0.4.0'
-      sha: a2182e55e7af7785a20fe349a990bd564b904a36
+      commitTitle: 'chore: Remove redundant DeployTime field from history entries
+        (#30)...'
+      sha: c000b20125f47795a6feda6bbd6a28c0172514ba
       tags:
-      - v0.4.0
+      - v0.4.0-7-gc000b20
     path: rollout-controller
   path: vendir/crds
 kind: LockConfig

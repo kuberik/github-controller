@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sptr "k8s.io/utils/ptr"
 
 	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
@@ -40,6 +41,7 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag:      "v1.0.0",
 								Revision: &revision,
@@ -60,6 +62,7 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 				Status: kuberikrolloutv1alpha1.RolloutStatus{
 					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 						{
+							ID: k8sptr.To(int64(1)),
 							Version: kuberikrolloutv1alpha1.VersionInfo{
 								Tag: "v1.0.0",
 								// Revision is nil
