@@ -439,17 +439,21 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		// Determine desired GH status for this history entry
 		ghState, ghDesc := mapBakeToGitHubState(h.BakeStatus)
 
-		// Get latest status for this deployment to avoid duplicate posts
-		statuses, _, err := gh.Repositories.ListDeploymentStatuses(ctx, owner, repo, dep.GetID(), &github.ListOptions{PerPage: 1})
-		if err == nil && len(statuses) > 0 {
-			if statuses[0].State != nil && *statuses[0].State == ghState && statuses[0].Description != nil && *statuses[0].Description == ghDesc {
-				// Up-to-date, skip
-			} else {
-				if err := r.createDeploymentStatus(ctx, gh, ghd, dep.GetID(), ghState, ghDesc); err != nil {
-					return nil, "", err
+		// Check all statuses to see if we've already created this exact status
+		// This prevents duplicate statuses like: pending -> success -> pending
+		statuses, _, err := gh.Repositories.ListDeploymentStatuses(ctx, owner, repo, dep.GetID(), &github.ListOptions{})
+		statusExists := false
+		if err == nil {
+			for _, status := range statuses {
+				if status.State != nil && *status.State == ghState && status.Description != nil && *status.Description == ghDesc {
+					// This exact status already exists, skip creating it again
+					statusExists = true
+					break
 				}
 			}
-		} else {
+		}
+
+		if !statusExists {
 			if err := r.createDeploymentStatus(ctx, gh, ghd, dep.GetID(), ghState, ghDesc); err != nil {
 				return nil, "", err
 			}

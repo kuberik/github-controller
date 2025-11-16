@@ -1659,5 +1659,137 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(statuses3)).To(Equal(firstStatusCount+1), fmt.Sprintf("Should have %d statuses after status change (one new status)", firstStatusCount+1))
 		})
+
+		It("Should not create duplicate statuses for the same deployment", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating Rollout with single history entry")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-no-duplicate-status",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			// Start with pending status
+			bakeStatusPending := "Pending"
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(1)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						BakeStatus: &bakeStatusPending,
+						Timestamp:  metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-no-duplicate-status",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-no-duplicate-status",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment",
+					Environment:    "production",
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Getting GitHub client")
+			token := os.Getenv("GITHUB_TOKEN")
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(context.Background(), ts)
+			ghClient := github.NewClient(tc)
+
+			By("First sync - creates pending status")
+			_, _, err := reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Get the deployment
+			deployments, _, err := ghClient.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
+				Ref:         revision,
+				Environment: "production",
+			})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(deployments)).To(Equal(1))
+			deploymentID := *deployments[0].ID
+
+			// Verify we have 1 status (pending)
+			statuses1, _, err := ghClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", deploymentID, &github.ListOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(statuses1)).To(Equal(1))
+			Expect(*statuses1[0].State).To(Equal("pending"))
+
+			By("Second sync with same pending status - should NOT create duplicate")
+			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify still only 1 status (no duplicate)
+			statuses2, _, err := ghClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", deploymentID, &github.ListOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(statuses2)).To(Equal(1), "Should not create duplicate pending status")
+
+			By("Third sync with success status - should create new status")
+			bakeStatusSuccess := "Succeeded"
+			rollout.Status.History[0].BakeStatus = &bakeStatusSuccess
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify we now have 2 statuses (pending -> success)
+			statuses3, _, err := ghClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", deploymentID, &github.ListOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(statuses3)).To(Equal(2), "Should have 2 statuses: pending and success")
+			Expect(*statuses3[0].State).To(Equal("success"), "Latest status should be success")
+
+			By("Fourth sync trying to go back to pending - should NOT create duplicate pending")
+			bakeStatusPending2 := "Pending"
+			rollout.Status.History[0].BakeStatus = &bakeStatusPending2
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify still only 2 statuses (pending -> success, no duplicate pending)
+			statuses4, _, err := ghClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", deploymentID, &github.ListOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(statuses4)).To(Equal(2), "Should not create duplicate pending status after success")
+
+			// Verify the statuses are still pending and success (no new ones)
+			states := make(map[string]bool)
+			for _, s := range statuses4 {
+				if s.State != nil {
+					states[*s.State] = true
+				}
+			}
+			Expect(states["pending"]).To(BeTrue(), "Should have pending status")
+			Expect(states["success"]).To(BeTrue(), "Should have success status")
+			Expect(len(states)).To(Equal(2), "Should only have pending and success, no duplicates")
+		})
 	})
 })
