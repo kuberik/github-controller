@@ -224,11 +224,14 @@ func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context,
 	}
 	owner, repo := parts[0], parts[1]
 
+	// Format environment as "deploymentName:environment" for GitHub
+	formattedEnv := formatDeploymentEnvironment(githubDeployment.Spec.DeploymentName, githubDeployment.Spec.Environment)
+
 	// Create deployment status request
 	statusRequest := &github.DeploymentStatusRequest{
 		State:       github.String(state),
 		Description: github.String(description),
-		Environment: &githubDeployment.Spec.Environment,
+		Environment: &formattedEnv,
 	}
 
 	// Create the deployment status
@@ -293,6 +296,16 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 	}
 
 	return nil
+}
+
+// formatDeploymentTask formats the deployment name into the task format "deploy:<name>"
+func formatDeploymentTask(deploymentName string) string {
+	return fmt.Sprintf("deploy:%s", deploymentName)
+}
+
+// formatDeploymentEnvironment formats the environment as "deploymentName:environment"
+func formatDeploymentEnvironment(deploymentName, environment string) string {
+	return fmt.Sprintf("%s/%s", deploymentName, environment)
 }
 
 // extractDeploymentKey extracts the deployment key from a GitHub deployment's payload and environment
@@ -364,20 +377,26 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		}
 		historyID := fmt.Sprintf("%d", *h.ID)
 
-		// Create key for this history entry using ID + environment
+		// Format environment as "deploymentName:environment" for GitHub
+		formattedEnv := formatDeploymentEnvironment(ghd.Spec.DeploymentName, ghd.Spec.Environment)
+
+		// Create key for this history entry using ID + formatted environment
 		key := deploymentKey{
 			ID:          historyID,
-			Environment: ghd.Spec.Environment,
+			Environment: formattedEnv,
 		}
 
 		// Check if we already found this deployment in a previous iteration
 		dep := keyToDeployment[key]
 
-		// If not found, query deployments for this specific ref + environment
+		// If not found, query deployments for this specific ref + environment + task
+		// Using task (deployment name) helps differentiate different service deployments
 		if dep == nil {
+			task := formatDeploymentTask(ghd.Spec.DeploymentName)
 			deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 				Ref:         ref,
-				Environment: ghd.Spec.Environment,
+				Task:        task,
+				Environment: formattedEnv,
 			})
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to list deployments for ref %s: %w", ref, err)
@@ -419,9 +438,13 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 				return nil, "", fmt.Errorf("failed to marshal deployment payload: %w", err)
 			}
 
+			// Format task as "deploy:<name>" and environment as "deploymentName:environment"
+			task := formatDeploymentTask(ghd.Spec.DeploymentName)
+			formattedEnv := formatDeploymentEnvironment(ghd.Spec.DeploymentName, ghd.Spec.Environment)
 			req := &github.DeploymentRequest{
 				Ref:                   &ref,
-				Environment:           &ghd.Spec.Environment,
+				Task:                  &task,
+				Environment:           &formattedEnv,
 				Description:           h.Message,
 				RequiredContexts:      &ghd.Spec.RequiredContexts,
 				ProductionEnvironment: github.Bool(ghd.Spec.Environment == "production"),
@@ -477,9 +500,10 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 	}
 
 	latestID := fmt.Sprintf("%d", *latest.ID)
+	formattedEnv := formatDeploymentEnvironment(ghd.Spec.DeploymentName, ghd.Spec.Environment)
 	latestKey := deploymentKey{
 		ID:          latestID,
-		Environment: ghd.Spec.Environment,
+		Environment: formattedEnv,
 	}
 
 	if dep := keyToDeployment[latestKey]; dep != nil {
