@@ -661,7 +661,9 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 	}
 	owner, repo := parts[0], parts[1]
 
-	var allowedTags []string
+	// Initialize as empty slice (not nil) when dependencies are set
+	// This ensures allowedVersions is set to empty array instead of nil
+	allowedTags := []string{}
 	seenTags := make(map[string]bool) // Avoid duplicates
 
 	// Check each dependency
@@ -716,12 +718,20 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 	}
 
 	// Check if allowedVersions need to be updated
-	currentAllowedVersions := []string{}
-	if rolloutGate.Spec.AllowedVersions != nil {
-		currentAllowedVersions = *rolloutGate.Spec.AllowedVersions
+	// When dependencies are set, we must ensure allowedVersions is set to empty array instead of nil
+	needsUpdate := false
+	if rolloutGate.Spec.AllowedVersions == nil {
+		// If currently nil and dependencies are set, we need to set it to empty array
+		needsUpdate = true
+	} else {
+		// Compare current values with new values
+		currentAllowedVersions := *rolloutGate.Spec.AllowedVersions
+		if !r.slicesEqual(currentAllowedVersions, allowedTags) {
+			needsUpdate = true
+		}
 	}
 
-	if !r.slicesEqual(currentAllowedVersions, allowedTags) {
+	if needsUpdate {
 		rolloutGate.Spec.AllowedVersions = &allowedTags
 		if err := r.Update(ctx, rolloutGate); err != nil {
 			return fmt.Errorf("failed to update RolloutGate allowedVersions: %w", err)

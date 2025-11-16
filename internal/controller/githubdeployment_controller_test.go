@@ -1334,6 +1334,102 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			}
 		})
 
+		It("Should set allowedVersions to empty array (not nil) when dependencies are set but no matching tags found", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating Rollout")
+			revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-empty-allowed-versions",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			// Set status with releaseCandidates (but no matching tags for dependencies)
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(1)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+				ReleaseCandidates: []kuberikrolloutv1alpha1.VersionInfo{
+					{
+						Tag:      "v1.0.0",
+						Revision: &revision,
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating GitHubDeployment with dependencies")
+			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-deployment-empty-allowed",
+					Namespace: GitHubDeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-empty-allowed-versions",
+					},
+					Repository:     "kuberik/github-controller-testing",
+					DeploymentName: "test-deployment",
+					Environment:    "production",
+					Dependencies:   []string{"staging"}, // Dependency that doesn't exist or has no successful deployments
+				},
+			}
+			// Delete if exists first
+			k8sClient.Delete(context.Background(), githubDeployment)
+			Expect(k8sClient.Create(context.Background(), githubDeployment)).Should(Succeed())
+
+			By("Reconciling GitHubDeployment with dependencies but no matching tags")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-deployment-empty-allowed",
+					Namespace: GitHubDeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			// Get the updated GitHubDeployment to find the RolloutGate name
+			updatedGitHubDeployment := &kuberikv1alpha1.GitHubDeployment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-deployment-empty-allowed",
+				Namespace: GitHubDeploymentNamespace,
+			}, updatedGitHubDeployment)).To(Succeed())
+			Expect(updatedGitHubDeployment.Status.RolloutGateRef).ToNot(BeNil())
+
+			By("Verifying allowedVersions is set to empty array (not nil) when dependencies are set")
+			rolloutGate := &kuberikrolloutv1alpha1.RolloutGate{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      updatedGitHubDeployment.Status.RolloutGateRef.Name,
+				Namespace: GitHubDeploymentNamespace,
+			}, rolloutGate)).To(Succeed())
+
+			// When dependencies are set, allowedVersions must be set to empty array, not nil
+			Expect(rolloutGate.Spec.AllowedVersions).ToNot(BeNil(), "allowedVersions should not be nil when dependencies are set")
+			Expect(*rolloutGate.Spec.AllowedVersions).To(BeEmpty(), "allowedVersions should be empty array when no matching tags found")
+		})
+
 		It("Should use custom requeue interval when specified", func() {
 			skipIfNoGitHubToken()
 
