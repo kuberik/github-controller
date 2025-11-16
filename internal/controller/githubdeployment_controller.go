@@ -676,8 +676,12 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromDependencies(ctx c
 	// Check each dependency
 	for _, depName := range githubDeployment.Spec.Dependencies {
 		// Get deployments for this dependency
+		// Dependencies are for the same deployment name but in a different environment
+		// e.g., if current deployment is "test-deployment" in "production" and dependency is "staging",
+		// we look for "test-deployment" in "staging" environment
 		deployments, _, err := client.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
-			Environment: depName,
+			Environment: formatDeploymentEnvironment(githubDeployment.Spec.DeploymentName, depName),
+			Task:        formatDeploymentTask(githubDeployment.Spec.DeploymentName),
 		})
 		if err != nil {
 			continue

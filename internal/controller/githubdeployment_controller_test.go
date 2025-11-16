@@ -353,7 +353,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(deployment.Ref).ToNot(BeNil())
 			Expect(*deployment.Ref).To(Equal(revision))
 			Expect(deployment.Environment).ToNot(BeNil())
-			Expect(*deployment.Environment).To(Equal("production"))
+			Expect(*deployment.Environment).To(Equal("test-deployment/production"))
 
 			By("Verifying GitHub deployment status was created")
 			// Get deployment statuses
@@ -858,11 +858,16 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			By("Creating staging deployment with success status")
 			// First create a dependency deployment (staging)
 			// Use a commit SHA as the revision (GitHub deployment ref)
+			// Dependencies are for the same deployment name but different environment
+			// So we create "test-deployment-deps/staging" environment
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			stagingTag := "v1.0.0" // Tag that matches the staging revision
+			stagingEnv := "test-deployment-deps/staging"
+			stagingTask := "deploy:test-deployment-deps"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
-				Environment:           github.String("staging"),
+				Environment:           github.String(stagingEnv),
+				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
@@ -873,7 +878,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			stagingStatusRequest := &github.DeploymentStatusRequest{
 				State:       github.String("success"),
 				Description: github.String("Staging deployment successful"),
-				Environment: github.String("staging"),
+				Environment: github.String(stagingEnv),
 			}
 			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), stagingStatusRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -986,11 +991,15 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			By("Creating first dependency deployment (staging) with success status")
 			// Use a commit SHA as the revision (GitHub deployment ref)
+			// Dependencies are for the same deployment name but different environment
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			stagingTag := "v1.0.0"
+			stagingEnv := "test-deployment-multi-deps/staging"
+			stagingTask := "deploy:test-deployment-multi-deps"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
-				Environment:           github.String("staging"),
+				Environment:           github.String(stagingEnv),
+				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
@@ -1000,7 +1009,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			stagingStatusRequest := &github.DeploymentStatusRequest{
 				State:       github.String("success"),
 				Description: github.String("Staging deployment successful"),
-				Environment: github.String("staging"),
+				Environment: github.String(stagingEnv),
 			}
 			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), stagingStatusRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1008,9 +1017,12 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			By("Creating second dependency deployment (qa) with success status")
 			// Use same commit SHA as staging (same revision, same tag)
 			qaRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			qaEnv := "test-deployment-multi-deps/qa"
+			qaTask := "deploy:test-deployment-multi-deps"
 			qaDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(qaRef),
-				Environment:           github.String("qa"),
+				Environment:           github.String(qaEnv),
+				Task:                  github.String(qaTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
@@ -1020,7 +1032,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			qaStatusRequest := &github.DeploymentStatusRequest{
 				State:       github.String("success"),
 				Description: github.String("QA deployment successful"),
-				Environment: github.String("qa"),
+				Environment: github.String(qaEnv),
 			}
 			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", qaDeployment.GetID(), qaStatusRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1134,10 +1146,14 @@ var _ = Describe("GitHubDeployment Controller", func() {
 
 			By("Creating dependency deployment with failure status")
 			// Use a commit SHA as the revision (GitHub deployment ref)
+			// Dependencies are for the same deployment name but different environment
 			failedRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			failedEnv := "test-deployment-failed-dep/staging"
+			failedTask := "deploy:test-deployment-failed-dep"
 			failedDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(failedRef),
-				Environment:           github.String("staging"),
+				Environment:           github.String(failedEnv),
+				Task:                  github.String(failedTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
@@ -1148,7 +1164,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			failedStatusRequest := &github.DeploymentStatusRequest{
 				State:       github.String("failure"),
 				Description: github.String("Staging deployment failed"),
-				Environment: github.String("staging"),
+				Environment: github.String(failedEnv),
 			}
 			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", failedDeployment.GetID(), failedStatusRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1596,7 +1612,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			tc := oauth2.NewClient(context.Background(), ts)
 			client := github.NewClient(tc)
 			deployments, _, err := client.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
-				Environment: "production",
+				Environment: "test-deployment/production",
 			})
 			Expect(err).ToNot(HaveOccurred())
 
@@ -1615,7 +1631,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 					}
 				} else {
 					// Count deployments without payload for debugging
-					if d.Environment != nil && *d.Environment == "production" {
+					if d.Environment != nil && *d.Environment == "test-deployment/production" {
 						noPayloadCount++
 					}
 				}
@@ -1701,7 +1717,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			// Verify exactly one deployment was created
 			deployments, _, err := ghClient.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
 				Ref:         revision,
-				Environment: "production",
+				Environment: "test-deployment/production",
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(deployments)).To(Equal(1), "Should have exactly 1 deployment after first sync")
@@ -1722,7 +1738,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			// Verify still exactly one deployment exists
 			deployments2, _, err := ghClient.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
 				Ref:         revision,
-				Environment: "production",
+				Environment: "test-deployment/production",
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(deployments2)).To(Equal(1), "Should still have exactly 1 deployment after second sync")
@@ -1744,7 +1760,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			// Verify still exactly one deployment exists
 			deployments3, _, err := ghClient.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
 				Ref:         revision,
-				Environment: "production",
+				Environment: "test-deployment/production",
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(deployments3)).To(Equal(1), "Should still have exactly 1 deployment after status change")
@@ -1828,7 +1844,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			// Get the deployment
 			deployments, _, err := ghClient.Repositories.ListDeployments(context.Background(), "kuberik", "github-controller-testing", &github.DeploymentsListOptions{
 				Ref:         revision,
-				Environment: "production",
+				Environment: "test-deployment/production",
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(len(deployments)).To(Equal(1))
