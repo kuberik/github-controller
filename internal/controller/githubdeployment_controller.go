@@ -21,11 +21,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
-	"github.com/bartventer/httpcache"
-	_ "github.com/bartventer/httpcache/store/memcache" // Register the in-memory backend
 	"github.com/google/go-github/v62/github"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,7 +54,8 @@ type deploymentKey struct {
 // GitHubDeploymentReconciler reconciles a GitHubDeployment object
 type GitHubDeploymentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme         *runtime.Scheme
+	CacheTransport http.RoundTripper
 }
 
 // +kubebuilder:rbac:groups=github.kuberik.com,resources=githubdeployments,verbs=get;list;watch;create;update;patch;delete
@@ -185,8 +185,8 @@ func (r *GitHubDeploymentReconciler) getReferencedRollout(ctx context.Context, g
 }
 
 // getGitHubClient creates a GitHub client using the token from the specified secret
-// The client uses conditional requests with caching to reduce API rate limit consumption
-// Each token gets its own client with its own cache to ensure proper isolation
+// The client uses ghcache for conditional requests with caching to reduce API rate limit consumption
+// ghcache automatically partitions the cache by auth header, ensuring proper token isolation
 func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment) (*github.Client, error) {
 	secretName := githubDeployment.Spec.GitHubTokenSecret
 	if secretName == "" {
@@ -207,9 +207,16 @@ func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, github
 		return nil, fmt.Errorf("token key not found in secret %s", secretName)
 	}
 
-	// Create HTTP client with memory cache for conditional requests
-	// Each client gets its own cache, ensuring different tokens have isolated caches
-	httpClient := httpcache.NewClient("memcache://")
+	// Create HTTP client with ghcache transport
+	// If CacheTransport is not set, use default transport (for tests)
+	transport := r.CacheTransport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	httpClient := &http.Client{
+		Transport: transport,
+	}
 
 	// Create GitHub client with OAuth2 authentication and caching
 	return github.NewClient(httpClient).WithAuthToken(string(token)), nil

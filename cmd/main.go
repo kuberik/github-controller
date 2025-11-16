@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"net/http"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -34,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/prow/pkg/ghcache"
 
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 
@@ -181,9 +183,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize ghcache transport for GitHub API caching
+	// ghcache supports partitioned cache by auth header, so different tokens are automatically isolated
+	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+	cacheTransport := ghcache.NewMemCache(baseTransport, 10, ghcache.NewRequestThrottlingTimes(0, 0, 0, 0, 0))
+
 	if err := (&controller.GitHubDeploymentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		CacheTransport: cacheTransport,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GitHubDeployment")
 		os.Exit(1)
