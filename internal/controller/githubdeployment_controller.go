@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -214,56 +215,6 @@ func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, github
 	return github.NewClient(httpClient).WithAuthToken(string(token)), nil
 }
 
-// createOrUpdateGitHubDeployment creates or updates a GitHub deployment
-func (r *GitHubDeploymentReconciler) createOrUpdateGitHubDeployment(ctx context.Context, client *github.Client, githubDeployment *kuberikv1alpha1.GitHubDeployment, rollout *kuberikrolloutv1alpha1.Rollout) (*int64, string, error) {
-	// Parse repository
-	parts := strings.Split(githubDeployment.Spec.Repository, "/")
-	if len(parts) != 2 {
-		return nil, "", fmt.Errorf("invalid repository format: %s", githubDeployment.Spec.Repository)
-	}
-	owner, repo := parts[0], parts[1]
-
-	// Get current version from rollout
-	currentVersion := r.getCurrentVersionFromRollout(rollout)
-	if currentVersion == nil {
-		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
-	}
-
-	// Generate automatic description
-	description := fmt.Sprintf("Deployment %s to %s (ref: %s)", githubDeployment.Name, githubDeployment.Spec.Environment, *currentVersion)
-
-	// Prepare deployment request
-	deploymentRequest := &github.DeploymentRequest{
-		Ref:                   currentVersion,
-		Environment:           &githubDeployment.Spec.Environment,
-		Description:           &description,
-		RequiredContexts:      &githubDeployment.Spec.RequiredContexts,
-		ProductionEnvironment: github.Bool(githubDeployment.Spec.Environment == "production"),
-		AutoMerge:             github.Bool(false),
-	}
-
-	// If we already have a deployment ID, check if we need to create a new deployment
-	if githubDeployment.Status.GitHubDeploymentID != nil {
-		existingDeployment, _, err := client.Repositories.GetDeployment(ctx, owner, repo, *githubDeployment.Status.GitHubDeploymentID)
-		if err == nil {
-			// Check if the version has changed
-			if existingDeployment.Ref != nil && *existingDeployment.Ref == *currentVersion {
-				// Version hasn't changed, return existing deployment
-				return existingDeployment.ID, *existingDeployment.URL, nil
-			}
-			// Version has changed, we'll create a new deployment below
-		}
-	}
-
-	// Create new deployment
-	deployment, _, err := client.Repositories.CreateDeployment(ctx, owner, repo, deploymentRequest)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create GitHub deployment: %w", err)
-	}
-
-	return deployment.ID, *deployment.URL, nil
-}
-
 // createDeploymentStatus creates a deployment status for the given deployment
 func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context, client *github.Client, githubDeployment *kuberikv1alpha1.GitHubDeployment, deploymentID int64, state string, description string) error {
 	// Parse repository
@@ -346,16 +297,35 @@ func (r *GitHubDeploymentReconciler) updateGitHubDeploymentStatus(ctx context.Co
 
 // extractDeploymentKey extracts the deployment key from a GitHub deployment's payload and environment
 func (r *GitHubDeploymentReconciler) extractDeploymentKey(dep *github.Deployment) *deploymentKey {
-	if len(dep.Payload) == 0 {
+	if len(dep.Payload) == 0 || dep.Environment == nil {
+		return nil
+	}
+
+	// Try to decode payload - GitHub API may return it as base64-encoded string or JSON object
+	var payloadBytes []byte
+
+	// First try as base64-encoded string
+	var payloadStr string
+	if err := json.Unmarshal(dep.Payload, &payloadStr); err == nil {
+		// Decode base64
+		if decoded, err := base64.StdEncoding.DecodeString(payloadStr); err == nil {
+			payloadBytes = decoded
+		} else {
+			// Not base64, use string as-is
+			payloadBytes = []byte(payloadStr)
+		}
+	} else {
+		// Not a string, use payload directly
+		payloadBytes = dep.Payload
+	}
+
+	// Skip empty objects
+	if string(payloadBytes) == "{}" || string(payloadBytes) == "null" {
 		return nil
 	}
 
 	var payload deploymentPayload
-	if err := json.Unmarshal(dep.Payload, &payload); err != nil {
-		return nil
-	}
-
-	if payload.ID == "" || dep.Environment == nil {
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil || payload.ID == "" {
 		return nil
 	}
 
@@ -376,20 +346,9 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 	}
 	owner, repo := parts[0], parts[1]
 
-	// List existing deployments for this environment to avoid duplicate creations
-	deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{Environment: ghd.Spec.Environment})
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to list deployments: %w", err)
-	}
-
 	// Map deployments by ID + environment from payload
+	// We'll query deployments per history entry using ref + environment for more targeted queries
 	keyToDeployment := make(map[deploymentKey]*github.Deployment)
-	for _, d := range deployments {
-		key := r.extractDeploymentKey(d)
-		if key != nil {
-			keyToDeployment[*key] = d
-		}
-	}
 
 	// Iterate history from oldest to newest so states evolve in order
 	for i := len(rollout.Status.History) - 1; i >= 0; i-- {
@@ -411,13 +370,50 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 			Environment: ghd.Spec.Environment,
 		}
 
+		// Check if we already found this deployment in a previous iteration
 		dep := keyToDeployment[key]
+
+		// If not found, query deployments for this specific ref + environment
+		if dep == nil {
+			deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
+				Ref:         ref,
+				Environment: ghd.Spec.Environment,
+			})
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to list deployments for ref %s: %w", ref, err)
+			}
+
+			// Check all deployments to find one with our ID
+			for _, d := range deployments {
+				if d.ID == nil {
+					continue
+				}
+
+				// Try to extract key from list response first (faster)
+				existingKey := r.extractDeploymentKey(d)
+				if existingKey != nil && existingKey.ID == historyID {
+					dep = d
+					keyToDeployment[key] = dep
+					break
+				}
+
+				// If payload extraction failed, fetch individually to get full payload
+				fullDeployment, _, err := gh.Repositories.GetDeployment(ctx, owner, repo, *d.ID)
+				if err != nil {
+					continue
+				}
+				existingKey = r.extractDeploymentKey(fullDeployment)
+				if existingKey != nil && existingKey.ID == historyID {
+					dep = fullDeployment
+					keyToDeployment[key] = dep
+					break
+				}
+			}
+		}
+
 		if dep == nil {
 			// Create missing deployment for this history entry
-			// Create payload with ID for mapping
-			payload := deploymentPayload{
-				ID: historyID,
-			}
+			payload := deploymentPayload{ID: historyID}
 			payloadJSON, err := json.Marshal(payload)
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to marshal deployment payload: %w", err)
@@ -460,18 +456,20 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		}
 	}
 
-	// Latest is history[0] if present - we need at least one valid deployment
-	if len(rollout.Status.History) == 0 {
-		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
+	// Find the latest entry with valid ID and revision (skip entries without ID)
+	var latest *kuberikrolloutv1alpha1.DeploymentHistoryEntry
+	for i := 0; i < len(rollout.Status.History); i++ {
+		h := rollout.Status.History[i]
+		if h.ID != nil && h.Version.Revision != nil && *h.Version.Revision != "" {
+			// Copy the entry to avoid pointer issues
+			entry := h
+			latest = &entry
+			break
+		}
 	}
 
-	latest := rollout.Status.History[0]
-	if latest.Version.Revision == nil || *latest.Version.Revision == "" {
-		return nil, "", fmt.Errorf("no revision found in rollout history - revision field is required for GitHub deployments")
-	}
-
-	if latest.ID == nil {
-		return nil, "", fmt.Errorf("no ID found in latest rollout history entry - ID field is required for GitHub deployments")
+	if latest == nil {
+		return nil, "", fmt.Errorf("no valid history entry found with both ID and revision")
 	}
 
 	latestID := fmt.Sprintf("%d", *latest.ID)
