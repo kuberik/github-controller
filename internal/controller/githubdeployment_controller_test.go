@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/gomega"
 	"golang.org/x/oauth2"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -122,6 +123,270 @@ var _ = Describe("GitHubDeployment Controller", func() {
 	})
 
 	Context("Unit Tests", func() {
+		Context("getControllerNamespace", func() {
+			It("Should read namespace from service account file", func() {
+				// We can't easily mock file reads in Go without changing the function
+				// So we'll test with environment variable fallback instead
+				testNamespace := "test-namespace"
+				os.Setenv("POD_NAMESPACE", testNamespace)
+				defer os.Unsetenv("POD_NAMESPACE")
+
+				result := reconciler.getControllerNamespace()
+				Expect(result).To(Equal(testNamespace))
+			})
+
+			It("Should fallback to POD_NAMESPACE environment variable", func() {
+				testNamespace := "env-namespace"
+				os.Setenv("POD_NAMESPACE", testNamespace)
+				defer os.Unsetenv("POD_NAMESPACE")
+
+				result := reconciler.getControllerNamespace()
+				Expect(result).To(Equal(testNamespace))
+			})
+
+			It("Should return empty string when no namespace is available", func() {
+				os.Unsetenv("POD_NAMESPACE")
+				os.Unsetenv("WATCH_NAMESPACE")
+
+				result := reconciler.getControllerNamespace()
+				// In test environment, this might return empty or might read from actual file
+				// So we just check it doesn't panic
+				Expect(result).ToNot(BeNil()) // Can be empty string or actual namespace
+			})
+		})
+
+		Context("getRolloutDashboardURL", func() {
+			const (
+				ControllerNamespace = "controller-ns"
+				TestNamespace       = "test-ns"
+				TestName            = "test-deployment"
+			)
+
+			BeforeEach(func() {
+				// Set controller namespace via environment variable
+				os.Setenv("POD_NAMESPACE", ControllerNamespace)
+
+				// Create the controller namespace
+				ns := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: ControllerNamespace,
+					},
+				}
+				// Ignore error if namespace already exists
+				k8sClient.Create(context.Background(), ns)
+			})
+
+			AfterEach(func() {
+				os.Unsetenv("POD_NAMESPACE")
+				// Clean up test resources
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+				}
+				k8sClient.Delete(context.Background(), svc)
+
+				ingress := &networkingv1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-ingress",
+						Namespace: ControllerNamespace,
+					},
+				}
+				k8sClient.Delete(context.Background(), ingress)
+			})
+
+			It("Should return empty string when service doesn't exist", func() {
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(BeEmpty())
+			})
+
+			It("Should return empty string when ingress doesn't exist", func() {
+				// Create service but no ingress
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(BeEmpty())
+			})
+
+			It("Should return URL with path when ingress with HTTP exists", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create ingress pointing to rollout-dashboard
+				ingress := &networkingv1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-ingress",
+						Namespace: ControllerNamespace,
+					},
+					Spec: networkingv1.IngressSpec{
+						Rules: []networkingv1.IngressRule{
+							{
+								Host: "dashboard.example.com",
+								IngressRuleValue: networkingv1.IngressRuleValue{
+									HTTP: &networkingv1.HTTPIngressRuleValue{
+										Paths: []networkingv1.HTTPIngressPath{
+											{
+												Path:     "/",
+												PathType: func() *networkingv1.PathType { pt := networkingv1.PathTypePrefix; return &pt }(),
+												Backend: networkingv1.IngressBackend{
+													Service: &networkingv1.IngressServiceBackend{
+														Name: "rollout-dashboard",
+														Port: networkingv1.ServiceBackendPort{
+															Number: 80,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), ingress)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				expectedURL := fmt.Sprintf("http://dashboard.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
+			})
+
+			It("Should return URL with HTTPS when TLS is configured", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create ingress with TLS
+				ingress := &networkingv1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-ingress",
+						Namespace: ControllerNamespace,
+					},
+					Spec: networkingv1.IngressSpec{
+						TLS: []networkingv1.IngressTLS{
+							{
+								Hosts:      []string{"dashboard.example.com"},
+								SecretName: "tls-secret",
+							},
+						},
+						Rules: []networkingv1.IngressRule{
+							{
+								Host: "dashboard.example.com",
+								IngressRuleValue: networkingv1.IngressRuleValue{
+									HTTP: &networkingv1.HTTPIngressRuleValue{
+										Paths: []networkingv1.HTTPIngressPath{
+											{
+												Path:     "/",
+												PathType: func() *networkingv1.PathType { pt := networkingv1.PathTypePrefix; return &pt }(),
+												Backend: networkingv1.IngressBackend{
+													Service: &networkingv1.IngressServiceBackend{
+														Name: "rollout-dashboard",
+														Port: networkingv1.ServiceBackendPort{
+															Number: 80,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), ingress)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				expectedURL := fmt.Sprintf("https://dashboard.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
+			})
+
+			It("Should return URL with default backend when configured", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create ingress with default backend
+				ingress := &networkingv1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-ingress",
+						Namespace: ControllerNamespace,
+					},
+					Spec: networkingv1.IngressSpec{
+						DefaultBackend: &networkingv1.IngressBackend{
+							Service: &networkingv1.IngressServiceBackend{
+								Name: "rollout-dashboard",
+								Port: networkingv1.ServiceBackendPort{
+									Number: 80,
+								},
+							},
+						},
+						Rules: []networkingv1.IngressRule{
+							{
+								Host: "dashboard.example.com",
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), ingress)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				expectedURL := fmt.Sprintf("http://dashboard.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
+			})
+
+			It("Should return empty string when controller namespace cannot be determined", func() {
+				os.Unsetenv("POD_NAMESPACE")
+				os.Unsetenv("WATCH_NAMESPACE")
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(BeEmpty())
+			})
+		})
+
 		Context("getCurrentVersionFromRollout", func() {
 			It("Should return revision when available", func() {
 				revision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"

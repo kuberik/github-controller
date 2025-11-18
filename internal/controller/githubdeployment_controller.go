@@ -22,11 +22,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/go-github/v62/github"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -234,11 +236,18 @@ func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context,
 	// Format environment as "deploymentName:environment" for GitHub
 	formattedEnv := formatDeploymentEnvironment(githubDeployment.Spec.DeploymentName, githubDeployment.Spec.Environment)
 
+	// Get rollout-dashboard URL from ingress/gateway in controller's namespace
+	// The URL will include the path /rollouts/<namespace>/<name>
+	environmentURL := r.getRolloutDashboardURL(ctx, githubDeployment.Namespace, githubDeployment.Name)
+
 	// Create deployment status request
 	statusRequest := &github.DeploymentStatusRequest{
 		State:       github.String(state),
 		Description: github.String(description),
 		Environment: &formattedEnv,
+	}
+	if environmentURL != "" {
+		statusRequest.EnvironmentURL = github.String(environmentURL)
 	}
 
 	// Create the deployment status
@@ -313,6 +322,113 @@ func formatDeploymentTask(deploymentName string) string {
 // formatDeploymentEnvironment formats the environment as "deploymentName:environment"
 func formatDeploymentEnvironment(deploymentName, environment string) string {
 	return fmt.Sprintf("%s/%s", deploymentName, environment)
+}
+
+// getControllerNamespace gets the namespace where the controller is running.
+// It reads from the service account namespace file, or falls back to environment variable.
+func (r *GitHubDeploymentReconciler) getControllerNamespace() string {
+	// Try reading from service account namespace file (standard in Kubernetes pods)
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if ns := strings.TrimSpace(string(data)); ns != "" {
+			return ns
+		}
+	}
+	// Fallback to environment variable
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	// Last resort: try WATCH_NAMESPACE (used by some operators)
+	if ns := os.Getenv("WATCH_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return ""
+}
+
+// getRolloutDashboardURL finds the URL for rollout-dashboard service from ingress or gateway
+// in the controller's namespace. Returns empty string if not found.
+// The URL will have the path /rollouts/<githubDeploymentNamespace>/<githubDeploymentName> appended.
+func (r *GitHubDeploymentReconciler) getRolloutDashboardURL(ctx context.Context, githubDeploymentNamespace, githubDeploymentName string) string {
+	// Get the controller's namespace
+	controllerNamespace := r.getControllerNamespace()
+	if controllerNamespace == "" {
+		return ""
+	}
+
+	// First, check if rollout-dashboard service exists in controller's namespace
+	svc := &corev1.Service{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      "rollout-dashboard",
+		Namespace: controllerNamespace,
+	}, svc)
+	if err != nil {
+		// Service doesn't exist, return empty
+		return ""
+	}
+
+	// List all ingresses in the controller's namespace
+	ingressList := &networkingv1.IngressList{}
+	if err := r.List(ctx, ingressList, client.InNamespace(controllerNamespace)); err != nil {
+		return ""
+	}
+
+	// Find ingress that points to rollout-dashboard service
+	var baseURL string
+	for i := range ingressList.Items {
+		ingress := &ingressList.Items[i]
+
+		// Check default backend first
+		if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+			if ingress.Spec.DefaultBackend.Service.Name == "rollout-dashboard" {
+				// For default backend, we need at least one rule with a host
+				// If no rules, we can't construct a URL
+				if len(ingress.Spec.Rules) > 0 && ingress.Spec.Rules[0].Host != "" {
+					scheme := "https"
+					if len(ingress.Spec.TLS) == 0 {
+						scheme = "http"
+					}
+					baseURL = fmt.Sprintf("%s://%s", scheme, ingress.Spec.Rules[0].Host)
+					break
+				}
+			}
+		}
+
+		// Check rules and paths
+		for _, rule := range ingress.Spec.Rules {
+			if rule.Host == "" {
+				continue
+			}
+
+			// Check if any path in this rule points to rollout-dashboard service
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil && path.Backend.Service.Name == "rollout-dashboard" {
+					// Construct base URL
+					scheme := "https"
+					if len(ingress.Spec.TLS) == 0 {
+						scheme = "http"
+					}
+					baseURL = fmt.Sprintf("%s://%s", scheme, rule.Host)
+					// Note: We ignore the ingress path and use our own path instead
+					break
+				}
+			}
+			if baseURL != "" {
+				break
+			}
+		}
+		if baseURL != "" {
+			break
+		}
+	}
+
+	if baseURL == "" {
+		// TODO: Add Gateway API support if needed
+		// For now, only Ingress is supported
+		return ""
+	}
+
+	// Append the path: /rollouts/<githubDeploymentNamespace>/<githubDeploymentName>
+	path := fmt.Sprintf("/rollouts/%s/%s", githubDeploymentNamespace, githubDeploymentName)
+	return fmt.Sprintf("%s%s", baseURL, path)
 }
 
 // extractDeploymentKey extracts the deployment key from a GitHub deployment's payload and environment
