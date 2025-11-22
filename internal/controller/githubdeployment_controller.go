@@ -65,6 +65,8 @@ type GitHubDeploymentReconciler struct {
 // +kubebuilder:rbac:groups=github.kuberik.com,resources=githubdeployments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=kuberik.com,resources=rolloutgates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kuberik.com,resources=rollouts,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -657,6 +659,35 @@ func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	}
 }
 
+// applyRolloutGateDesiredState applies the desired state to a RolloutGate based on the GitHubDeployment spec.
+// This function sets all fields that should be managed by this controller, whether creating or updating.
+func (r *GitHubDeploymentReconciler) applyRolloutGateDesiredState(rolloutGate *kuberikrolloutv1alpha1.RolloutGate, githubDeployment *kuberikv1alpha1.GitHubDeployment) error {
+	// Set annotations
+	prettyName := "Dependencies not ready yet"
+	var description string
+	if len(githubDeployment.Spec.Dependencies) > 0 {
+		description = fmt.Sprintf("This gate is passing only for those versions that have been successfully deployed to all environments that are specified as dependencies (%s).", strings.Join(githubDeployment.Spec.Dependencies, ", "))
+	} else {
+		description = "This gate is passing only for those versions that have been successfully deployed to all environments that are specified as dependencies."
+	}
+
+	if rolloutGate.Annotations == nil {
+		rolloutGate.Annotations = make(map[string]string)
+	}
+	rolloutGate.Annotations["gate.kuberik.com/pretty-name"] = prettyName
+	rolloutGate.Annotations["gate.kuberik.com/description"] = description
+
+	// Set spec
+	rolloutGate.Spec.RolloutRef = &githubDeployment.Spec.RolloutRef
+
+	// Set owner reference
+	if err := ctrl.SetControllerReference(githubDeployment, rolloutGate, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set owner reference: %w", err)
+	}
+
+	return nil
+}
+
 // createOrUpdateRolloutGate creates or updates the RolloutGate based on the GitHubDeployment spec
 func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Context, githubDeployment *kuberikv1alpha1.GitHubDeployment) error {
 	// List all RolloutGates in the namespace to find one owned by this GitHubDeployment
@@ -692,14 +723,11 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 				GenerateName: "ghd-",
 				Namespace:    githubDeployment.Namespace,
 			},
-			Spec: kuberikrolloutv1alpha1.RolloutGateSpec{
-				RolloutRef: &githubDeployment.Spec.RolloutRef,
-			},
 		}
 
-		// Set owner reference
-		if err := ctrl.SetControllerReference(githubDeployment, rolloutGate, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference: %w", err)
+		// Apply desired state
+		if err := r.applyRolloutGateDesiredState(rolloutGate, githubDeployment); err != nil {
+			return err
 		}
 
 		if err := r.Create(ctx, rolloutGate); err != nil {
@@ -707,36 +735,62 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 		}
 		existingRolloutGate = rolloutGate
 	} else {
-		// RolloutGate exists, ensure owner reference and RolloutRef are up to date
+		// RolloutGate exists, apply desired state and update if needed
+		// Store original state for comparison
+		originalAnnotations := make(map[string]string)
+		if existingRolloutGate.Annotations != nil {
+			for k, v := range existingRolloutGate.Annotations {
+				originalAnnotations[k] = v
+			}
+		}
+		var originalRolloutRef *corev1.LocalObjectReference
+		if existingRolloutGate.Spec.RolloutRef != nil {
+			originalRolloutRef = &corev1.LocalObjectReference{
+				Name: existingRolloutGate.Spec.RolloutRef.Name,
+			}
+		}
+		originalOwnerRefs := make([]metav1.OwnerReference, len(existingRolloutGate.OwnerReferences))
+		copy(originalOwnerRefs, existingRolloutGate.OwnerReferences)
+
+		// Apply desired state
+		if err := r.applyRolloutGateDesiredState(existingRolloutGate, githubDeployment); err != nil {
+			return err
+		}
+
+		// Check if update is needed by comparing current state with original
 		needsUpdate := false
 
-		// Check and update owner reference if needed
-		ownerRefFound := false
-		for i := range existingRolloutGate.OwnerReferences {
-			if existingRolloutGate.OwnerReferences[i].Kind == "GitHubDeployment" &&
-				existingRolloutGate.OwnerReferences[i].APIVersion == kuberikv1alpha1.GroupVersion.String() &&
-				existingRolloutGate.OwnerReferences[i].Name == githubDeployment.Name {
-				ownerRefFound = true
-				if existingRolloutGate.OwnerReferences[i].UID != githubDeployment.UID {
-					// Update owner reference UID if it doesn't match
-					existingRolloutGate.OwnerReferences[i].UID = githubDeployment.UID
+		// Check annotations
+		if len(originalAnnotations) != len(existingRolloutGate.Annotations) {
+			needsUpdate = true
+		} else {
+			for k, v := range existingRolloutGate.Annotations {
+				if originalAnnotations[k] != v {
 					needsUpdate = true
+					break
 				}
-				break
 			}
 		}
-		if !ownerRefFound {
-			// Owner reference missing, set it
-			if err := ctrl.SetControllerReference(githubDeployment, existingRolloutGate, r.Scheme); err != nil {
-				return fmt.Errorf("failed to set owner reference: %w", err)
+
+		// Check RolloutRef
+		if originalRolloutRef == nil || existingRolloutGate.Spec.RolloutRef == nil {
+			if originalRolloutRef != existingRolloutGate.Spec.RolloutRef {
+				needsUpdate = true
 			}
+		} else if originalRolloutRef.Name != existingRolloutGate.Spec.RolloutRef.Name {
 			needsUpdate = true
 		}
 
-		// Ensure RolloutRef is set (don't overwrite other fields)
-		if existingRolloutGate.Spec.RolloutRef == nil || existingRolloutGate.Spec.RolloutRef.Name != githubDeployment.Spec.RolloutRef.Name {
-			existingRolloutGate.Spec.RolloutRef = &githubDeployment.Spec.RolloutRef
+		// Check owner references (SetControllerReference may have modified them)
+		if len(originalOwnerRefs) != len(existingRolloutGate.OwnerReferences) {
 			needsUpdate = true
+		} else {
+			for i, ref := range existingRolloutGate.OwnerReferences {
+				if i >= len(originalOwnerRefs) || ref.UID != originalOwnerRefs[i].UID {
+					needsUpdate = true
+					break
+				}
+			}
 		}
 
 		if needsUpdate {

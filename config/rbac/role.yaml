@@ -14,14 +14,6 @@ rules:
   - list
   - watch
 - apiGroups:
-  - networking.k8s.io
-  resources:
-  - ingresses
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - github.kuberik.com
   resources:
   - githubdeployments
@@ -63,6 +55,14 @@ rules:
   - kuberik.com
   resources:
   - rollouts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
   verbs:
   - get
   - list
