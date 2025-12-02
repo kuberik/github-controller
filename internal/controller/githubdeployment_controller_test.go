@@ -1976,7 +1976,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			ghClient := github.NewClient(tc)
 
 			By("First sync - should create one deployment and one status")
-			_, _, err := reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err := reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify exactly one deployment was created
@@ -1997,7 +1997,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			firstStatusCount := len(statuses1)
 
 			By("Second sync - should NOT create duplicate deployment or status")
-			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify still exactly one deployment exists
@@ -2019,7 +2019,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status.History[0].BakeStatus = &bakeStatusChanged
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
-			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify still exactly one deployment exists
@@ -2103,7 +2103,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			ghClient := github.NewClient(tc)
 
 			By("First sync - creates pending status")
-			_, _, err := reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err := reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Get the deployment
@@ -2122,7 +2122,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			Expect(*statuses1[0].State).To(Equal("pending"))
 
 			By("Second sync with same pending status - should NOT create duplicate")
-			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify still only 1 status (no duplicate)
@@ -2135,7 +2135,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status.History[0].BakeStatus = &bakeStatusSuccess
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
-			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify we now have 2 statuses (pending -> success)
@@ -2149,7 +2149,7 @@ var _ = Describe("GitHubDeployment Controller", func() {
 			rollout.Status.History[0].BakeStatus = &bakeStatusPending2
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
-			_, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
+			_, _, _, err = reconciler.syncDeploymentHistory(context.Background(), ghClient, githubDeployment, rollout)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify still only 2 statuses (pending -> success, no duplicate pending)

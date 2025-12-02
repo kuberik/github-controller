@@ -61,6 +61,45 @@ type GitHubDeploymentSpec struct {
 	RequeueInterval string `json:"requeueInterval,omitempty"`
 }
 
+// DeploymentStatusEntry represents a deployment status for a specific version in an environment.
+type DeploymentStatusEntry struct {
+	// Environment is the deployment environment (e.g., "production", "staging")
+	// +required
+	Environment string `json:"environment"`
+
+	// Version is the version/revision being tracked
+	// +required
+	Version string `json:"version"`
+
+	// Status is the GitHub deployment status state (e.g., "success", "failure", "in_progress", "pending", "inactive")
+	// +required
+	Status string `json:"status"`
+
+	// DeploymentID is the GitHub deployment ID
+	// +optional
+	DeploymentID *int64 `json:"deploymentId,omitempty"`
+
+	// DeploymentURL is the URL of the GitHub deployment
+	// +optional
+	DeploymentURL string `json:"deploymentUrl,omitempty"`
+}
+
+// EnvironmentInfo represents information about an environment's deployment.
+type EnvironmentInfo struct {
+	// Environment is the environment name
+	// +required
+	Environment string `json:"environment"`
+
+	// EnvironmentURL is the URL of the actual deployed environment (e.g., dashboard URL)
+	// +optional
+	EnvironmentURL string `json:"environmentUrl,omitempty"`
+
+	// Dependencies is a list of environment names that this environment depends on
+	// +listType=atomic
+	// +optional
+	Dependencies []string `json:"dependencies,omitempty"`
+}
+
 // GitHubDeploymentStatus defines the observed state of GitHubDeployment.
 type GitHubDeploymentStatus struct {
 	// GitHubDeploymentID is the ID of the GitHub deployment
@@ -82,6 +121,19 @@ type GitHubDeploymentStatus struct {
 	// RolloutGateRef is a reference to the RolloutGate that was created/updated
 	// +optional
 	RolloutGateRef *corev1.LocalObjectReference `json:"rolloutGateRef,omitempty"`
+
+	// DeploymentStatuses tracks deployment statuses per version and environment.
+	// For the current environment, only versions that are still in history are tracked.
+	// For dependencies, only versions that are in current environment's history or are in release candidates are tracked.
+	// +listType=atomic
+	// +optional
+	DeploymentStatuses []DeploymentStatusEntry `json:"deploymentStatuses,omitempty"`
+
+	// EnvironmentInfos tracks deployment information for each environment.
+	// Each environment has a single deployment URL and list of dependencies (not per version).
+	// +listType=atomic
+	// +optional
+	EnvironmentInfos []EnvironmentInfo `json:"environmentInfos,omitempty"`
 
 	// conditions represent the current state of the GitHubDeployment resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
