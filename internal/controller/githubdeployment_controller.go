@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 

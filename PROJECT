@@ -7,7 +7,7 @@ domain: kuberik.com
 layout:
 - go.kubebuilder.io/v4
 projectName: github-controller
-repo: github.com/kuberik/github-operator
+repo: github.com/kuberik/github-controller
 resources:
 - api:
     crdVersion: v1
@@ -16,6 +16,6 @@ resources:
   domain: kuberik.com
   group: github
   kind: GitHubDeployment
-  path: github.com/kuberik/github-operator/api/v1alpha1
+  path: github.com/kuberik/github-controller/api/v1alpha1
   version: v1alpha1
 version: "3"

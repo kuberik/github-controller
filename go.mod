@@ -1,4 +1,4 @@
-module github.com/kuberik/github-operator
+module github.com/kuberik/github-controller
 
 go 1.25
 

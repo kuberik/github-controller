@@ -39,8 +39,8 @@ import (
 
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 
-	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
-	"github.com/kuberik/github-operator/internal/controller"
+	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
+	"github.com/kuberik/github-controller/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

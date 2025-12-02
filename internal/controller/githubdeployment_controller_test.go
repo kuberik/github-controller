@@ -35,7 +35,7 @@ import (
 	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	kuberikv1alpha1 "github.com/kuberik/github-operator/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
