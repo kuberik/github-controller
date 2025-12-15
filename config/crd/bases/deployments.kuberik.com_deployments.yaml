@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: githubdeployments.github.kuberik.com
+  name: deployments.deployments.kuberik.com
 spec:
-  group: github.kuberik.com
+  group: deployments.kuberik.com
   names:
-    kind: GitHubDeployment
-    listKind: GitHubDeploymentList
-    plural: githubdeployments
-    singular: githubdeployment
+    kind: Deployment
+    listKind: DeploymentList
+    plural: deployments
+    singular: deployment
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GitHubDeployment is the Schema for the githubdeployments API
+        description: Deployment is the Schema for the deployments API
         properties:
           apiVersion:
             description: |-
@@ -37,41 +37,57 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GitHubDeployment
+            description: spec defines the desired state of Deployment
             properties:
-              dependencies:
-                description: Dependencies is a list of deployment names that this
-                  deployment depends on
-                items:
-                  type: string
-                type: array
+              backend:
+                description: Backend specifies the deployment backend to use (e.g.,
+                  "github")
+                enum:
+                - github
+                type: string
               deploymentName:
-                description: DeploymentName is the name of the GitHub deployment
+                description: DeploymentName is the name of the deployment
                 type: string
               environment:
-                description: Environment is the GitHub deployment environment (e.g.,
-                  "production", "staging")
+                description: Environment is the deployment environment (e.g., "production",
+                  "staging")
                 type: string
-              githubTokenSecret:
-                description: GitHubTokenSecret is the name of the Kubernetes Secret
-                  containing the GitHub token
-                type: string
+              relationship:
+                description: Relationship defines how this deployment relates to another
+                  environment
+                properties:
+                  environment:
+                    description: Environment is the environment name this deployment
+                      relates to
+                    type: string
+                  type:
+                    description: 'Type is the type of relationship: "after" or "togetherWith"'
+                    enum:
+                    - after
+                    - togetherWith
+                    type: string
+                required:
+                - environment
+                - type
+                type: object
               repository:
-                description: Repository is the GitHub repository in format "owner/repo"
+                description: Repository is the repository identifier (e.g., "owner/repo"
+                  for GitHub)
                 type: string
               requeueInterval:
                 description: |-
-                  RequeueInterval specifies how often the controller should reconcile this GitHubDeployment
+                  RequeueInterval specifies how often the controller should reconcile this Deployment
                   If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
                 pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
                 type: string
               requiredContexts:
                 description: RequiredContexts is a list of required status check contexts
+                  (backend-specific)
                 items:
                   type: string
                 type: array
               rolloutRef:
-                description: RolloutRef is a reference to the Rollout that this GitHubDeployment
+                description: RolloutRef is a reference to the Rollout that this Deployment
                   manages
                 properties:
                   name:
@@ -85,17 +101,22 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              tokenSecret:
+                description: TokenSecret is the name of the Kubernetes Secret containing
+                  the backend token
+                type: string
             required:
+            - backend
             - deploymentName
             - repository
             - rolloutRef
             type: object
           status:
-            description: status defines the observed state of GitHubDeployment
+            description: status defines the observed state of Deployment
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the GitHubDeployment resource.
+                  conditions represent the current state of the Deployment resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -165,29 +186,32 @@ spec:
               currentVersion:
                 description: CurrentVersion is the current version being deployed
                 type: string
+              deploymentId:
+                description: DeploymentID is the ID of the deployment (backend-specific)
+                format: int64
+                type: integer
               deploymentStatuses:
                 description: |-
                   DeploymentStatuses tracks deployment statuses per version and environment.
-                  For the current environment, only versions that are still in history are tracked.
-                  For dependencies, only versions that are in current environment's history or are in release candidates are tracked.
+                  Only versions that are relevant based on environment relationships are tracked.
                 items:
                   description: DeploymentStatusEntry represents a deployment status
                     for a specific version in an environment.
                   properties:
                     deploymentId:
-                      description: DeploymentID is the GitHub deployment ID
+                      description: DeploymentID is the deployment ID (backend-specific)
                       format: int64
                       type: integer
                     deploymentUrl:
-                      description: DeploymentURL is the URL of the GitHub deployment
+                      description: DeploymentURL is the URL of the deployment (backend-specific)
                       type: string
                     environment:
                       description: Environment is the deployment environment (e.g.,
                         "production", "staging")
                       type: string
                     status:
-                      description: Status is the GitHub deployment status state (e.g.,
-                        "success", "failure", "in_progress", "pending", "inactive")
+                      description: Status is the deployment status state (e.g., "success",
+                        "failure", "in_progress", "pending", "inactive")
                       type: string
                     version:
                       description: Version is the version/revision being tracked
@@ -199,25 +223,17 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              deploymentUrl:
+                description: DeploymentURL is the URL of the deployment (backend-specific)
+                type: string
               environmentInfos:
                 description: |-
                   EnvironmentInfos tracks deployment information for each environment.
-                  Each environment has a single deployment URL and list of dependencies (not per version).
+                  Each environment has environment URL and relationships (not per version).
                 items:
                   description: EnvironmentInfo represents information about an environment's
                     deployment.
                   properties:
-                    dependencies:
-                      description: Dependencies is a list of environment names that
-                        this environment depends on
-                      items:
-                        type: string
-                      type: array
-                      x-kubernetes-list-type: atomic
-                    deploymentUrl:
-                      description: DeploymentURL is the URL of the GitHub deployment
-                        for this environment
-                      type: string
                     environment:
                       description: Environment is the environment name
                       type: string
@@ -225,22 +241,32 @@ spec:
                       description: EnvironmentURL is the URL of the actual deployed
                         environment (e.g., dashboard URL)
                       type: string
+                    relationship:
+                      description: Relationship defines how this environment relates
+                        to another environment
+                      properties:
+                        environment:
+                          description: Environment is the environment name this deployment
+                            relates to
+                          type: string
+                        type:
+                          description: 'Type is the type of relationship: "after"
+                            or "togetherWith"'
+                          enum:
+                          - after
+                          - togetherWith
+                          type: string
+                      required:
+                      - environment
+                      - type
+                      type: object
                   required:
-                  - deploymentUrl
                   - environment
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
-              githubDeploymentId:
-                description: GitHubDeploymentID is the ID of the GitHub deployment
-                format: int64
-                type: integer
-              githubDeploymentUrl:
-                description: GitHubDeploymentURL is the URL of the GitHub deployment
-                type: string
               lastSyncTime:
-                description: LastSyncTime is the last time the GitHub deployment was
-                  synchronized
+                description: LastSyncTime is the last time the deployment was synchronized
                 format: date-time
                 type: string
               rolloutGateRef:

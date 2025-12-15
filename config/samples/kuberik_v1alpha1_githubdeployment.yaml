@@ -1,4 +1,4 @@
-apiVersion: github.kuberik.com/v1alpha1
+apiVersion: deployments.kuberik.com/v1alpha1
 kind: GitHubDeployment
 metadata:
   labels:

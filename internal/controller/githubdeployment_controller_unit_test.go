@@ -121,12 +121,13 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 
 	Context("GitHubDeployment validation", func() {
 		It("Should validate GitHubDeployment spec", func() {
-			githubDeployment := &kuberikv1alpha1.GitHubDeployment{
+			githubDeployment := &kuberikv1alpha1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
 					Namespace: "default",
 				},
-				Spec: kuberikv1alpha1.GitHubDeploymentSpec{
+				Spec: kuberikv1alpha1.DeploymentSpec{
+					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
