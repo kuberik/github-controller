@@ -53,7 +53,7 @@ var _ = Describe("Deployment Controller", func() {
 	}
 
 	// Helper function to clean up GitHub deployments
-	cleanupGitHubDeployments := func(repository string) {
+	cleanupDeployments := func(repository string) {
 		token := os.Getenv("GITHUB_TOKEN")
 		if token == "" {
 			return // No token available
@@ -492,7 +492,7 @@ var _ = Describe("Deployment Controller", func() {
 			// Clean up GitHub deployments before each integration test
 			if os.Getenv("GITHUB_TOKEN") != "" {
 				By("Cleaning up GitHub deployments before test")
-				cleanupGitHubDeployments("kuberik/github-controller-testing")
+				cleanupDeployments("kuberik/github-controller-testing")
 			}
 		})
 

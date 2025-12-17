@@ -1,4 +1,4 @@
-module github.com/kuberik/github-controller
+module github.com/kuberik/deployment-controller
 
 go 1.25
 

@@ -1,12 +1,15 @@
-apiVersion: kuberik.com/v1alpha1
-kind: GitHubDeployment
+apiVersion: deployments.kuberik.com/v1alpha1
+kind: Deployment
 metadata:
-  name: github-deployment-sample
+  name: deployment-sample
   namespace: default
 spec:
-  # Reference to the Rollout that this GitHubDeployment manages
+  # Reference to the Rollout that this Deployment manages
   rolloutRef:
     name: myapp-rollout
+
+  # Backend configuration
+  backend: "github"
 
   # GitHub repository configuration
   repository: "myorg/myapp"
@@ -14,10 +17,13 @@ spec:
   environment: "production"
   ref: "main"
 
-  # Dependencies and requirements
-  dependencies:
-    - "myapp-staging"
-    - "myapp-testing"
+  # Relationship configuration
+  relationship:
+    type: "after"
+    environments:
+      - "staging"
+      - "testing"
+
   requiredContexts:
     - "ci"
     - "security-scan"

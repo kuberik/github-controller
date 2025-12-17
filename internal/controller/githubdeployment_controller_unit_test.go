@@ -27,7 +27,7 @@ import (
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
-var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
+var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 	var reconciler *GitHubDeploymentReconciler
 
 	BeforeEach(func() {
@@ -119,9 +119,9 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 		})
 	})
 
-	Context("GitHubDeployment validation", func() {
-		It("Should validate GitHubDeployment spec", func() {
-			githubDeployment := &kuberikv1alpha1.Deployment{
+	Context("Deployment validation", func() {
+		It("Should validate Deployment spec", func() {
+			deployment := &kuberikv1alpha1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
 					Namespace: "default",
@@ -137,10 +137,10 @@ var _ = Describe("GitHubDeployment Controller Unit Tests", func() {
 				},
 			}
 
-			Expect(githubDeployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(githubDeployment.Spec.Repository).To(Equal("kuberik/github-controller-testing"))
-			Expect(githubDeployment.Spec.DeploymentName).To(Equal("test-deployment"))
-			Expect(githubDeployment.Spec.Environment).To(Equal("production"))
+			Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
+			Expect(deployment.Spec.Repository).To(Equal("kuberik/github-controller-testing"))
+			Expect(deployment.Spec.DeploymentName).To(Equal("test-deployment"))
+			Expect(deployment.Spec.Environment).To(Equal("production"))
 		})
 	})
 })

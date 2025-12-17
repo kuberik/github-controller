@@ -39,8 +39,8 @@ import (
 
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 
-	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
-	"github.com/kuberik/github-controller/internal/controller"
+	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
+	"github.com/kuberik/deployment-controller/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -193,7 +193,7 @@ func main() {
 		Scheme:         mgr.GetScheme(),
 		CacheTransport: cacheTransport,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GitHubDeployment")
+		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

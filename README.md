@@ -1,70 +1,90 @@
-# GitHub RolloutGate Controller
+# Deployment Controller
 
-A Kubernetes controller for managing RolloutGate resources with GitHub integration. This controller implements a GitHub gate class that reports deployment status to GitHub's Deployments API and manages deployment dependencies.
+A Kubernetes controller for managing deployments across different backends. Currently implements GitHub backend integration that reports deployment status to GitHub's Deployments API and manages deployment relationships.
 
 ## Features
 
-- **GitHub Deployment Integration**: Creates and manages GitHub deployments for RolloutGate resources
-- **Dependency Management**: Reads GitHub deployment statuses to determine allowed versions based on successful deployments
-- **Annotation-based Configuration**: Uses annotations for GitHub-specific configuration
+- **Multi-Backend Support**: Generic Deployment API that can support multiple backends (currently GitHub)
+- **GitHub Deployment Integration**: Creates and manages GitHub deployments for Deployment resources
+- **Relationship Management**: Manages deployment relationships between environments (after, togetherWith)
 - **Status Reporting**: Reports deployment status back to GitHub Deployments API
+- **Automatic RolloutGate Creation**: Automatically creates and manages RolloutGate resources
 
 ## Architecture
 
-The controller integrates with the existing RolloutGate API from the rollout-controller and extends it with GitHub-specific functionality:
+The controller manages Deployment resources and integrates with backend-specific implementations:
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   RolloutGate   │    │ GitHub Rollout  │    │ GitHub Deploy   │
-│   (CRD)         │───▶│ Gate Controller │───▶│ API             │
+│   Deployment    │    │  Deployment     │    │  GitHub Deploy  │
+│   (CRD)         │───▶│  Controller    │───▶│  API            │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │
                                 ▼
                        ┌─────────────────┐
-                       │ Dependency      │
-                       │ Resolution      │
+                       │  RolloutGate    │
+                       │  (auto-created) │
                        └─────────────────┘
 ```
 
 ## Configuration
 
-The controller uses annotations on the RolloutGate resource for GitHub-specific configuration:
+The controller uses the Deployment CRD for configuration:
 
 ```yaml
-apiVersion: kuberik.com/v1alpha1
-kind: RolloutGate
+apiVersion: deployments.kuberik.com/v1alpha1
+kind: Deployment
 metadata:
-  name: github-gate
-  annotations:
-    kuberik.com/gate-class: "github"
-    kuberik.com/github-repo: "myorg/myapp"
-    kuberik.com/deployment-name: "myapp-production"
-    kuberik.com/environment: "production"
-    kuberik.com/ref: "main"
-    kuberik.com/description: "Production deployment"
-    kuberik.com/auto-merge: "true"
-    kuberik.com/dependencies: "myapp-staging,myapp-testing"
-    kuberik.com/required-contexts: "ci,security-scan"
+  name: myapp-production
+  namespace: default
 spec:
+  # Backend configuration
+  backend: "github"
+
+  # Reference to the Rollout that this Deployment manages
   rolloutRef:
     name: myapp-rollout
-  passing: true
+
+  # GitHub repository configuration
+  repository: "myorg/myapp"
+  deploymentName: "kuberik-myapp-production"
+  environment: "production"
+  ref: "main"
+
+  # Relationship configuration
+  relationship:
+    type: "after"
+    environments:
+      - "staging"
+      - "testing"
+
+  requiredContexts:
+    - "ci"
+    - "security-scan"
+
+  # GitHub token configuration
+  githubTokenSecret: "github-token"
 ```
 
-## Required Annotations
+## Deployment Spec
 
-- `kuberik.com/gate-class`: Must be set to "github" to enable GitHub gate functionality
-- `kuberik.com/github-repo`: GitHub repository in format "owner/repo"
-- `kuberik.com/deployment-name`: Name of the current deployment
+### Required Fields
 
-## Optional Annotations
+- `backend`: Backend type (currently only "github" is supported)
+- `rolloutRef`: Reference to the Rollout resource
+- `repository`: Repository identifier (for GitHub: "owner/repo")
+- `deploymentName`: Name of the deployment (must start with "kuberik" prefix for GitHub backend)
+- `environment`: Environment name
 
-- `kuberik.com/environment`: GitHub deployment environment (default: "production")
-- `kuberik.com/ref`: Git reference (branch, tag, or SHA)
-- `kuberik.com/auto-merge`: Whether to automatically merge the deployment
-- `kuberik.com/dependencies`: Comma-separated list of deployment dependencies
-- `kuberik.com/required-contexts`: Comma-separated list of required status check contexts
-- `kuberik.com/github-token`: Name of the secret containing GitHub token (default: "github-token")
+### Optional Fields
+
+- `ref`: Git reference (branch, tag, or SHA) - defaults to the revision from Rollout history
+- `relationship`: Defines relationship to other environments
+  - `type`: "after" or "togetherWith"
+  - `environments`: List of environment names this deployment relates to
+- `requiredContexts`: List of required status check contexts
+- `githubTokenSecret`: Name of the secret containing GitHub token (default: "github-token")
+- `requeueInterval`: Interval for reconciliation (default: "1m")
 
 ## GitHub Token Secret
 
@@ -84,25 +104,26 @@ data:
 ## Requirements
 
 - The referenced `Rollout` must have deployment history with a `Revision` field in the `VersionInfo` structure
-- If the revision is not available, the controller will fail with an error message
+- For GitHub backend, deployment names must start with "kuberik" prefix
+- If the revision is not available, the controller will requeue and wait
 
 ## How It Works
 
-1. **Gate Detection**: The controller identifies RolloutGate resources with `kuberik.com/gate-class: "github"` annotation.
+1. **Deployment Detection**: The controller watches for Deployment resources with the configured backend.
 
-2. **Configuration Extraction**: GitHub configuration is extracted from annotations.
+2. **Backend Validation**: The controller validates that the backend is supported (currently only "github").
 
-3. **GitHub Client**: A GitHub client is created using the token from the specified secret.
+3. **Rollout Reference**: The controller fetches the referenced Rollout to get the current deployment version.
 
-4. **Version Resolution**: The controller gets the current version from the referenced Rollout's deployment history, using the `Revision` field from `VersionInfo`. If the revision is not available, the controller will error out as it's required for GitHub deployments.
+4. **Version Resolution**: The controller gets the current version from the Rollout's deployment history, using the `Revision` field from `VersionInfo`.
 
-5. **Deployment Creation**: A GitHub deployment is created or updated using the current version from the rollout.
+5. **GitHub Deployment Sync**: For GitHub backend, the controller syncs the entire rollout history with GitHub deployments and statuses.
 
 6. **Status Reporting**: The deployment status is reported back to GitHub's Deployments API.
 
-7. **Dependency Resolution**: If dependencies are specified, the controller checks GitHub deployment statuses to determine allowed versions based on successful deployments.
+7. **RolloutGate Management**: The controller automatically creates and manages RolloutGate resources for the Deployment.
 
-8. **Version Management**: Allowed versions are updated based on successful dependency deployments.
+8. **Relationship Resolution**: If relationships are specified, the controller checks deployment statuses across environments to determine allowed versions.
 
 ## Installation
 
@@ -110,7 +131,7 @@ data:
 
 - Kubernetes cluster
 - kubectl configured
-- GitHub token with appropriate permissions
+- GitHub token with appropriate permissions (for GitHub backend)
 
 ### Install the Controller
 
@@ -129,7 +150,7 @@ data:
    kubectl apply -f config/samples/github-token-secret.yaml
    ```
 
-4. **Create RolloutGate resources**:
+4. **Create Deployment resources**:
    ```bash
    kubectl apply -k config/samples/
    ```
@@ -156,38 +177,40 @@ make run
 
 ## API Reference
 
-### RolloutGate Spec
+### Deployment Spec
 
 ```go
-type RolloutGateSpec struct {
-    RolloutRef *corev1.LocalObjectReference `json:"rolloutRef"`
-    Passing    *bool                         `json:"passing,omitempty"`
-    AllowedVersions *[]string                `json:"allowedVersions,omitempty"`
-    GitHub     *GitHubConfig                 `json:"github,omitempty"`
+type DeploymentSpec struct {
+    Backend          string                  `json:"backend"`
+    RolloutRef       corev1.LocalObjectReference `json:"rolloutRef"`
+    Repository       string                  `json:"repository"`
+    DeploymentName   string                  `json:"deploymentName"`
+    Environment      string                  `json:"environment"`
+    Ref              string                  `json:"ref,omitempty"`
+    Relationship     *DeploymentRelationship `json:"relationship,omitempty"`
+    RequiredContexts []string                `json:"requiredContexts,omitempty"`
+    GitHubTokenSecret string                 `json:"githubTokenSecret,omitempty"`
+    RequeueInterval  string                  `json:"requeueInterval,omitempty"`
 }
 ```
 
-### GitHubConfig
+### DeploymentRelationship
 
 ```go
-type GitHubConfig struct {
-    Repository        string   `json:"repository"`
-    DeploymentName    string   `json:"deploymentName"`
-    Dependencies      []string `json:"dependencies,omitempty"`
-    Environment       string   `json:"environment,omitempty"`
-    Ref               string   `json:"ref,omitempty"`
-    RequiredContexts  []string `json:"requiredContexts,omitempty"`
+type DeploymentRelationship struct {
+    Type         string   `json:"type"` // "after" or "togetherWith"
+    Environments []string `json:"environments"`
 }
 ```
 
-### RolloutGate Status
+### Deployment Status
 
 ```go
-type RolloutGateStatus struct {
-    GitHubDeploymentID *int64            `json:"githubDeploymentId,omitempty"`
-    GitHubDeploymentURL string            `json:"githubDeploymentUrl,omitempty"`
-    LastSyncTime        *metav1.Time      `json:"lastSyncTime,omitempty"`
-    Conditions          []metav1.Condition `json:"conditions,omitempty"`
+type DeploymentStatus struct {
+    DeploymentID  *int64                    `json:"deploymentId,omitempty"`
+    DeploymentURL string                    `json:"deploymentUrl,omitempty"`
+    Statuses      []DeploymentStatusEntry    `json:"statuses,omitempty"`
+    Environments  []EnvironmentInfo         `json:"environments,omitempty"`
 }
 ```
 

@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
@@ -61,7 +61,7 @@ type versionDeploymentInfo struct {
 	DeploymentURL string
 }
 
-// GitHubDeploymentReconciler reconciles a GitHubDeployment object
+// GitHubDeploymentReconciler reconciles a Deployment object for GitHub backend
 type GitHubDeploymentReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
@@ -160,14 +160,14 @@ func (r *GitHubDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&kuberikv1alpha1.Deployment{}).
 		Watches(
 			&kuberikrolloutv1alpha1.Rollout{},
-			handler.EnqueueRequestsFromMapFunc(r.rolloutToGitHubDeployment),
+			handler.EnqueueRequestsFromMapFunc(r.rolloutToDeployment),
 		).
-		Named("githubdeployment").
+		Named("deployment").
 		Complete(r)
 }
 
-// rolloutToGitHubDeployment maps a Rollout to all GitHubDeployments that reference it
-func (r *GitHubDeploymentReconciler) rolloutToGitHubDeployment(ctx context.Context, obj client.Object) []reconcile.Request {
+// rolloutToDeployment maps a Rollout to all Deployments that reference it
+func (r *GitHubDeploymentReconciler) rolloutToDeployment(ctx context.Context, obj client.Object) []reconcile.Request {
 	rollout := obj.(*kuberikrolloutv1alpha1.Rollout)
 	requests := []reconcile.Request{}
 
@@ -254,12 +254,12 @@ func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context,
 	owner, repo := parts[0], parts[1]
 
 	// For GitHub backend, deployment name must start with "kuberik" prefix
-	githubDeploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(githubDeploymentName, "kuberik") {
-		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", githubDeploymentName)
+	deploymentName := deployment.Spec.DeploymentName
+	if !strings.HasPrefix(deploymentName, "kuberik") {
+		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
 	}
 	// Format environment as "deploymentName/environment" for GitHub
-	formattedEnv := formatDeploymentEnvironment(githubDeploymentName, deployment.Spec.Environment)
+	formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 
 	// Get rollout-dashboard URL from ingress/gateway in controller's namespace
 	// The URL will include the path /rollouts/<namespace>/<name>
@@ -579,12 +579,12 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		historyID := fmt.Sprintf("%d", *h.ID)
 
 		// For GitHub backend, deployment name must start with "kuberik" prefix
-		githubDeploymentName := deployment.Spec.DeploymentName
-		if !strings.HasPrefix(githubDeploymentName, "kuberik") {
-			return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", githubDeploymentName)
+		deploymentName := deployment.Spec.DeploymentName
+		if !strings.HasPrefix(deploymentName, "kuberik") {
+			return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
 		}
 		// Format environment as "deploymentName/environment" for GitHub
-		formattedEnv := formatDeploymentEnvironment(githubDeploymentName, deployment.Spec.Environment)
+		formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 
 		// Create key for this history entry using ID + formatted environment
 		key := deploymentKey{
@@ -598,8 +598,8 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		// If not found, query deployments for this specific ref + environment + task
 		// Using task (deployment name) helps differentiate different service deployments
 		if dep == nil {
-			// githubDeploymentName already validated above
-			task := formatDeploymentTask(githubDeploymentName)
+			// deploymentName already validated above
+			task := formatDeploymentTask(deploymentName)
 			deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 				Ref:         ref,
 				Task:        task,
@@ -639,9 +639,9 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 
 		if dep == nil {
 			// For GitHub backend, deployment name must start with "kuberik" prefix
-			githubDeploymentName := deployment.Spec.DeploymentName
-			if !strings.HasPrefix(githubDeploymentName, "kuberik") {
-				return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", githubDeploymentName)
+			deploymentName := deployment.Spec.DeploymentName
+			if !strings.HasPrefix(deploymentName, "kuberik") {
+				return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
 			}
 
 			// Create missing deployment for this history entry
@@ -655,8 +655,8 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 			}
 
 			// Format task as "deploy:<name>" and environment as "deploymentName/environment"
-			task := formatDeploymentTask(githubDeploymentName)
-			formattedEnv := formatDeploymentEnvironment(githubDeploymentName, deployment.Spec.Environment)
+			task := formatDeploymentTask(deploymentName)
+			formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 			req := &github.DeploymentRequest{
 				Ref:                   &ref,
 				Task:                  &task,
@@ -733,11 +733,11 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 
 	latestID := fmt.Sprintf("%d", *latest.ID)
 	// For GitHub backend, deployment name must start with "kuberik" prefix
-	githubDeploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(githubDeploymentName, "kuberik") {
-		return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", githubDeploymentName)
+	deploymentName := deployment.Spec.DeploymentName
+	if !strings.HasPrefix(deploymentName, "kuberik") {
+		return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
 	}
-	formattedEnv := formatDeploymentEnvironment(githubDeploymentName, deployment.Spec.Environment)
+	formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 	latestKey := deploymentKey{
 		ID:          latestID,
 		Environment: formattedEnv,
@@ -819,7 +819,7 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 	for i := range rolloutGateList.Items {
 		gate := &rolloutGateList.Items[i]
 		for _, ownerRef := range gate.OwnerReferences {
-			if (ownerRef.Kind == "Deployment" || ownerRef.Kind == "GitHubDeployment") &&
+			if ownerRef.Kind == "Deployment" &&
 				ownerRef.APIVersion == kuberikv1alpha1.GroupVersion.String() &&
 				ownerRef.Name == deployment.Name {
 				// If UID is set, it must match; otherwise match by name and kind only
@@ -965,12 +965,12 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 	envRelationships := make(map[string]*kuberikv1alpha1.DeploymentRelationship)
 
 	// For GitHub backend, deployment name must start with "kuberik" prefix
-	githubDeploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(githubDeploymentName, "kuberik") {
-		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", githubDeploymentName)
+	deploymentName := deployment.Spec.DeploymentName
+	if !strings.HasPrefix(deploymentName, "kuberik") {
+		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
 	}
 	// Query all deployments with the same task to discover all environments
-	task := formatDeploymentTask(githubDeploymentName)
+	task := formatDeploymentTask(deploymentName)
 	allDeployments, _, err := client.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 		Task: task,
 	})
