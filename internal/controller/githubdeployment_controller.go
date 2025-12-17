@@ -93,8 +93,8 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Validate backend
-	if deployment.Spec.Backend != "github" {
-		return ctrl.Result{}, fmt.Errorf("unsupported backend: %s", deployment.Spec.Backend)
+	if deployment.Spec.BackendConfig.Backend != "github" {
+		return ctrl.Result{}, fmt.Errorf("unsupported backend: %s", deployment.Spec.BackendConfig.Backend)
 	}
 
 	// Get the referenced Rollout to get the current version
@@ -210,7 +210,7 @@ func (r *GitHubDeploymentReconciler) getReferencedRollout(ctx context.Context, d
 // The client uses ghcache for conditional requests with caching to reduce API rate limit consumption
 // ghcache automatically partitions the cache by auth header, ensuring proper token isolation
 func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, deployment *kuberikv1alpha1.Deployment) (*github.Client, error) {
-	secretName := deployment.Spec.TokenSecret
+	secretName := deployment.Spec.BackendConfig.BackendSecret
 	if secretName == "" {
 		secretName = "github-token" // Default secret name
 	}
@@ -246,10 +246,10 @@ func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, deploy
 
 // createDeploymentStatus creates a deployment status for the given deployment
 func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context, client *github.Client, deployment *kuberikv1alpha1.Deployment, deploymentID int64, state string, description string) error {
-	// Parse repository
-	parts := strings.Split(deployment.Spec.Repository, "/")
+	// Parse project
+	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid repository format: %s", deployment.Spec.Repository)
+		return fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -551,9 +551,9 @@ func (r *GitHubDeploymentReconciler) extractDeploymentKey(dep *github.Deployment
 // for versions currently in history.
 func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, gh *github.Client, deployment *kuberikv1alpha1.Deployment, rollout *kuberikrolloutv1alpha1.Rollout) (*int64, string, map[string]versionDeploymentInfo, error) {
 	// Parse repository
-	parts := strings.Split(deployment.Spec.Repository, "/")
+	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
 	if len(parts) != 2 {
-		return nil, "", nil, fmt.Errorf("invalid repository format: %s", deployment.Spec.Repository)
+		return nil, "", nil, fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -662,7 +662,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 				Task:                  &task,
 				Environment:           &formattedEnv,
 				Description:           h.Message,
-				RequiredContexts:      &deployment.Spec.RequiredContexts,
 				ProductionEnvironment: github.Bool(deployment.Spec.Environment == "production"),
 				AutoMerge:             github.Bool(false),
 				Payload:               payloadJSON,
@@ -947,10 +946,10 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 		}
 	}
 
-	// Parse repository
-	parts := strings.Split(deployment.Spec.Repository, "/")
+	// Parse project
+	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid repository format: %s", deployment.Spec.Repository)
+		return fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
 	}
 	owner, repo := parts[0], parts[1]
 

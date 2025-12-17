@@ -35,7 +35,7 @@ import (
 	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
@@ -469,18 +469,20 @@ var _ = Describe("Deployment Controller", func() {
 						Namespace: "default",
 					},
 					Spec: kuberikv1alpha1.DeploymentSpec{
-						Backend: "github",
 						RolloutRef: corev1.LocalObjectReference{
 							Name: "test-rollout",
 						},
-						Repository:     "kuberik/github-controller-testing",
+						BackendConfig: kuberikv1alpha1.BackendConfig{
+							Backend: "github",
+							Project: "kuberik/github-controller-testing",
+						},
 						DeploymentName: "kuberik-test-deployment",
 						Environment:    "production",
 					},
 				}
 
 				Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-				Expect(deployment.Spec.Repository).To(Equal("kuberik/github-controller-testing"))
+				Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/github-controller-testing"))
 				Expect(deployment.Spec.DeploymentName).To(Equal("kuberik-test-deployment"))
 				Expect(deployment.Spec.Environment).To(Equal("production"))
 			})
@@ -543,11 +545,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment",
 					Environment:    "production",
 				},
@@ -680,11 +684,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-change",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status",
 					Environment:    "production",
 				},
@@ -788,11 +794,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-update",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-update",
 					Environment:    "production",
 				},
@@ -864,11 +872,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "non-existent-rollout",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-missing-rollout",
 					Environment:    "production",
 				},
@@ -932,11 +942,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-no-revision",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-no-revision",
 					Environment:    "production",
 				},
@@ -991,11 +1003,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-empty-history",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-empty-history",
 					Environment:    "production",
 				},
@@ -1075,11 +1089,12 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status",
 					Environment:    "production",
 				},
@@ -1196,11 +1211,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-deps",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-deps",
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
@@ -1297,11 +1314,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-tracking",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status-tracking",
 					Environment:    "production",
 				},
@@ -1427,11 +1446,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-relevant",
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
@@ -1529,11 +1550,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-update",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status-update",
 					Environment:    "production",
 				},
@@ -1682,11 +1705,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-remove",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status-remove",
 					Environment:    "production",
 				},
@@ -1835,11 +1860,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-env",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-status-env",
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
@@ -1994,11 +2021,13 @@ var _ = Describe("Deployment Controller", func() {
 					Namespace: DeploymentNamespace,
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant-graph",
 					},
-					Repository:     "kuberik/github-controller-testing",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 					DeploymentName: "kuberik-test-deployment-relevant-graph",
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{

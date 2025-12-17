@@ -36,20 +36,28 @@ type DeploymentRelationship struct {
 	Type string `json:"type"`
 }
 
-// DeploymentSpec defines the desired state of Deployment
-type DeploymentSpec struct {
+// BackendConfig contains backend-specific configuration
+type BackendConfig struct {
 	// Backend specifies the deployment backend to use (e.g., "github")
 	// +required
 	// +kubebuilder:validation:Enum=github
 	Backend string `json:"backend"`
 
+	// Project is the project identifier (backend-specific format, e.g., "owner/repo" for GitHub)
+	// +required
+	Project string `json:"project"`
+
+	// BackendSecret is the name of the Kubernetes Secret containing the backend authentication token
+	// +optional
+	BackendSecret string `json:"backendSecret,omitempty"`
+}
+
+// DeploymentSpec defines the desired state of Deployment
+type DeploymentSpec struct {
+
 	// RolloutRef is a reference to the Rollout that this Deployment manages
 	// +required
 	RolloutRef corev1.LocalObjectReference `json:"rolloutRef"`
-
-	// Repository is the repository identifier (e.g., "owner/repo" for GitHub)
-	// +required
-	Repository string `json:"repository"`
 
 	// DeploymentName is the name of the deployment
 	// +required
@@ -63,13 +71,9 @@ type DeploymentSpec struct {
 	// +optional
 	Relationship *DeploymentRelationship `json:"relationship,omitempty"`
 
-	// RequiredContexts is a list of required status check contexts (backend-specific)
-	// +optional
-	RequiredContexts []string `json:"requiredContexts,omitempty"`
-
-	// TokenSecret is the name of the Kubernetes Secret containing the backend token
-	// +optional
-	TokenSecret string `json:"tokenSecret,omitempty"`
+	// BackendConfig contains backend-specific configuration
+	// +required
+	BackendConfig BackendConfig `json:"backendConfig"`
 
 	// RequeueInterval specifies how often the controller should reconcile this Deployment
 	// If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").

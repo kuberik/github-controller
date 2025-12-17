@@ -8,12 +8,8 @@ spec:
   rolloutRef:
     name: myapp-rollout
 
-  # Backend configuration
-  backend: "github"
-
-  # GitHub repository configuration
-  repository: "myorg/myapp"
-  deploymentName: "myapp-production"
+  # Deployment configuration
+  deploymentName: "kuberik-myapp-production"
   environment: "production"
   ref: "main"
 
@@ -24,9 +20,8 @@ spec:
       - "staging"
       - "testing"
 
-  requiredContexts:
-    - "ci"
-    - "security-scan"
-
-  # GitHub token configuration
-  githubTokenSecret: "github-token"
+  # Backend-specific configuration
+  backendConfig:
+    backend: "github"
+    project: "myorg/myapp"
+    backendSecret: "github-token"

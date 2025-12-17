@@ -38,15 +38,11 @@ metadata:
   name: myapp-production
   namespace: default
 spec:
-  # Backend configuration
-  backend: "github"
-
   # Reference to the Rollout that this Deployment manages
   rolloutRef:
     name: myapp-rollout
 
-  # GitHub repository configuration
-  repository: "myorg/myapp"
+  # Deployment configuration
   deploymentName: "kuberik-myapp-production"
   environment: "production"
   ref: "main"
@@ -58,32 +54,31 @@ spec:
       - "staging"
       - "testing"
 
-  requiredContexts:
-    - "ci"
-    - "security-scan"
-
-  # GitHub token configuration
-  githubTokenSecret: "github-token"
+  # Backend-specific configuration
+  backendConfig:
+    backend: "github"
+    project: "myorg/myapp"
+    backendSecret: "github-token"
 ```
 
 ## Deployment Spec
 
 ### Required Fields
 
-- `backend`: Backend type (currently only "github" is supported)
 - `rolloutRef`: Reference to the Rollout resource
-- `repository`: Repository identifier (for GitHub: "owner/repo")
 - `deploymentName`: Name of the deployment (must start with "kuberik" prefix for GitHub backend)
-- `environment`: Environment name
+- `backendConfig`: Backend-specific configuration
+  - `backend`: Backend type (currently only "github" is supported)
+  - `project`: Project identifier (for GitHub: "owner/repo")
+  - `backendSecret`: Name of the secret containing backend token (optional, default: "github-token" for GitHub)
 
 ### Optional Fields
 
+- `environment`: Environment name (e.g., "production", "staging")
 - `ref`: Git reference (branch, tag, or SHA) - defaults to the revision from Rollout history
 - `relationship`: Defines relationship to other environments
   - `type`: "after" or "togetherWith"
   - `environments`: List of environment names this deployment relates to
-- `requiredContexts`: List of required status check contexts
-- `githubTokenSecret`: Name of the secret containing GitHub token (default: "github-token")
 - `requeueInterval`: Interval for reconciliation (default: "1m")
 
 ## GitHub Token Secret
@@ -181,16 +176,19 @@ make run
 
 ```go
 type DeploymentSpec struct {
-    Backend          string                  `json:"backend"`
     RolloutRef       corev1.LocalObjectReference `json:"rolloutRef"`
-    Repository       string                  `json:"repository"`
     DeploymentName   string                  `json:"deploymentName"`
-    Environment      string                  `json:"environment"`
+    Environment      string                  `json:"environment,omitempty"`
     Ref              string                  `json:"ref,omitempty"`
     Relationship     *DeploymentRelationship `json:"relationship,omitempty"`
-    RequiredContexts []string                `json:"requiredContexts,omitempty"`
-    GitHubTokenSecret string                 `json:"githubTokenSecret,omitempty"`
+    BackendConfig    BackendConfig           `json:"backendConfig"`
     RequeueInterval  string                  `json:"requeueInterval,omitempty"`
+}
+
+type BackendConfig struct {
+    Backend          string   `json:"backend"`
+    Project          string   `json:"project"`
+    BackendSecret    string   `json:"backendSecret,omitempty"`
 }
 ```
 

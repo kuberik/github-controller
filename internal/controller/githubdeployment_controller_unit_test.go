@@ -23,7 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sptr "k8s.io/utils/ptr"
 
-	kuberikv1alpha1 "github.com/kuberik/github-controller/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
@@ -127,18 +127,20 @@ var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 					Namespace: "default",
 				},
 				Spec: kuberikv1alpha1.DeploymentSpec{
-					Backend: "github",
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
-					Repository:     "kuberik/github-controller-testing",
 					DeploymentName: "test-deployment",
 					Environment:    "production",
+					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
+						Project: "kuberik/github-controller-testing",
+					},
 				},
 			}
 
 			Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(deployment.Spec.Repository).To(Equal("kuberik/github-controller-testing"))
+			Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/github-controller-testing"))
 			Expect(deployment.Spec.DeploymentName).To(Equal("test-deployment"))
 			Expect(deployment.Spec.Environment).To(Equal("production"))
 		})
