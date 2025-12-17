@@ -39,12 +39,27 @@ spec:
           spec:
             description: spec defines the desired state of Deployment
             properties:
-              backend:
-                description: Backend specifies the deployment backend to use (e.g.,
-                  "github")
-                enum:
-                - github
-                type: string
+              backendConfig:
+                description: BackendConfig contains backend-specific configuration
+                properties:
+                  backend:
+                    description: Backend specifies the deployment backend to use (e.g.,
+                      "github")
+                    enum:
+                    - github
+                    type: string
+                  backendSecret:
+                    description: BackendSecret is the name of the Kubernetes Secret
+                      containing the backend authentication token
+                    type: string
+                  project:
+                    description: Project is the project identifier (backend-specific
+                      format, e.g., "owner/repo" for GitHub)
+                    type: string
+                required:
+                - backend
+                - project
+                type: object
               deploymentName:
                 description: DeploymentName is the name of the deployment
                 type: string
@@ -70,22 +85,12 @@ spec:
                 - environment
                 - type
                 type: object
-              repository:
-                description: Repository is the repository identifier (e.g., "owner/repo"
-                  for GitHub)
-                type: string
               requeueInterval:
                 description: |-
                   RequeueInterval specifies how often the controller should reconcile this Deployment
                   If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
                 pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
                 type: string
-              requiredContexts:
-                description: RequiredContexts is a list of required status check contexts
-                  (backend-specific)
-                items:
-                  type: string
-                type: array
               rolloutRef:
                 description: RolloutRef is a reference to the Rollout that this Deployment
                   manages
@@ -101,14 +106,9 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
-              tokenSecret:
-                description: TokenSecret is the name of the Kubernetes Secret containing
-                  the backend token
-                type: string
             required:
-            - backend
+            - backendConfig
             - deploymentName
-            - repository
             - rolloutRef
             type: object
           status:

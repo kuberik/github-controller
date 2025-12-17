@@ -246,17 +246,14 @@ func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, deploy
 
 // createDeploymentStatus creates a deployment status for the given deployment
 func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context, client *github.Client, deployment *kuberikv1alpha1.Deployment, deploymentID int64, state string, description string) error {
-	// Parse project
-	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	if err != nil {
+		return err
 	}
-	owner, repo := parts[0], parts[1]
 
-	// For GitHub backend, deployment name must start with "kuberik" prefix
 	deploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(deploymentName, "kuberik") {
-		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
+	if err := validateDeploymentName(deploymentName); err != nil {
+		return err
 	}
 	// Format environment as "deploymentName/environment" for GitHub
 	formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
@@ -276,9 +273,9 @@ func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context,
 	}
 
 	// Create the deployment status
-	_, _, err := client.Repositories.CreateDeploymentStatus(ctx, owner, repo, deploymentID, statusRequest)
-	if err != nil {
-		return fmt.Errorf("failed to create deployment status: %w", err)
+	_, _, createErr := client.Repositories.CreateDeploymentStatus(ctx, owner, repo, deploymentID, statusRequest)
+	if createErr != nil {
+		return fmt.Errorf("failed to create deployment status: %w", createErr)
 	}
 
 	return nil
@@ -382,6 +379,23 @@ func formatDeploymentTask(deploymentName string) string {
 // formatDeploymentEnvironment formats the environment as "deploymentName:environment"
 func formatDeploymentEnvironment(deploymentName, environment string) string {
 	return fmt.Sprintf("%s/%s", deploymentName, environment)
+}
+
+// parseProject parses the project string into owner and repo
+func parseProject(project string) (owner, repo string, err error) {
+	parts := strings.Split(project, "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid project format: %s", project)
+	}
+	return parts[0], parts[1], nil
+}
+
+// validateDeploymentName validates that the deployment name starts with "kuberik" prefix
+func validateDeploymentName(deploymentName string) error {
+	if !strings.HasPrefix(deploymentName, "kuberik") {
+		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
+	}
+	return nil
 }
 
 // getControllerNamespace gets the namespace where the controller is running.
@@ -550,12 +564,17 @@ func (r *GitHubDeploymentReconciler) extractDeploymentKey(dep *github.Deployment
 // deployment's ID and URL for status bookkeeping on the CR, and a map of version -> deployment info
 // for versions currently in history.
 func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, gh *github.Client, deployment *kuberikv1alpha1.Deployment, rollout *kuberikrolloutv1alpha1.Rollout) (*int64, string, map[string]versionDeploymentInfo, error) {
-	// Parse repository
-	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
-	if len(parts) != 2 {
-		return nil, "", nil, fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	if err != nil {
+		return nil, "", nil, err
 	}
-	owner, repo := parts[0], parts[1]
+
+	deploymentName := deployment.Spec.DeploymentName
+	if err := validateDeploymentName(deploymentName); err != nil {
+		return nil, "", nil, err
+	}
+	formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
+	task := formatDeploymentTask(deploymentName)
 
 	// Map deployments by ID + environment from payload
 	// We'll query deployments per history entry using ref + environment for more targeted queries
@@ -578,14 +597,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		}
 		historyID := fmt.Sprintf("%d", *h.ID)
 
-		// For GitHub backend, deployment name must start with "kuberik" prefix
-		deploymentName := deployment.Spec.DeploymentName
-		if !strings.HasPrefix(deploymentName, "kuberik") {
-			return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
-		}
-		// Format environment as "deploymentName/environment" for GitHub
-		formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
-
 		// Create key for this history entry using ID + formatted environment
 		key := deploymentKey{
 			ID:          historyID,
@@ -598,8 +609,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		// If not found, query deployments for this specific ref + environment + task
 		// Using task (deployment name) helps differentiate different service deployments
 		if dep == nil {
-			// deploymentName already validated above
-			task := formatDeploymentTask(deploymentName)
 			deployments, _, err := gh.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 				Ref:         ref,
 				Task:        task,
@@ -638,12 +647,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 		}
 
 		if dep == nil {
-			// For GitHub backend, deployment name must start with "kuberik" prefix
-			deploymentName := deployment.Spec.DeploymentName
-			if !strings.HasPrefix(deploymentName, "kuberik") {
-				return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
-			}
-
 			// Create missing deployment for this history entry
 			payload := deploymentPayload{
 				ID:           historyID,
@@ -654,9 +657,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 				return nil, "", nil, fmt.Errorf("failed to marshal deployment payload: %w", err)
 			}
 
-			// Format task as "deploy:<name>" and environment as "deploymentName/environment"
-			task := formatDeploymentTask(deploymentName)
-			formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 			req := &github.DeploymentRequest{
 				Ref:                   &ref,
 				Task:                  &task,
@@ -731,12 +731,6 @@ func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, 
 	}
 
 	latestID := fmt.Sprintf("%d", *latest.ID)
-	// For GitHub backend, deployment name must start with "kuberik" prefix
-	deploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(deploymentName, "kuberik") {
-		return nil, "", nil, fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
-	}
-	formattedEnv := formatDeploymentEnvironment(deploymentName, deployment.Spec.Environment)
 	latestKey := deploymentKey{
 		ID:          latestID,
 		Environment: formattedEnv,
@@ -946,12 +940,15 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 		}
 	}
 
-	// Parse project
-	parts := strings.Split(deployment.Spec.BackendConfig.Project, "/")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid project format: %s", deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	if err != nil {
+		return err
 	}
-	owner, repo := parts[0], parts[1]
+
+	deploymentName := deployment.Spec.DeploymentName
+	if err := validateDeploymentName(deploymentName); err != nil {
+		return err
+	}
 
 	// Build relationship graph to determine relevant environments
 	// Relevant environments are: current environment + all environments related to it (directly or transitively)
@@ -963,11 +960,6 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 	// We'll populate this as we discover environments
 	envRelationships := make(map[string]*kuberikv1alpha1.DeploymentRelationship)
 
-	// For GitHub backend, deployment name must start with "kuberik" prefix
-	deploymentName := deployment.Spec.DeploymentName
-	if !strings.HasPrefix(deploymentName, "kuberik") {
-		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
-	}
 	// Query all deployments with the same task to discover all environments
 	task := formatDeploymentTask(deploymentName)
 	allDeployments, _, err := client.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
@@ -1276,34 +1268,6 @@ func (r *GitHubDeploymentReconciler) slicesEqual(a, b []string) bool {
 	return true
 }
 
-// mapsEqual compares two string maps for equality
-func (r *GitHubDeploymentReconciler) mapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
-// findDeploymentStatusEntry finds a deployment status entry by environment and version
-func findDeploymentStatusEntry(statuses []kuberikv1alpha1.DeploymentStatusEntry, environment, version string) *kuberikv1alpha1.DeploymentStatusEntry {
-	for i := range statuses {
-		if statuses[i].Environment == environment && statuses[i].Version == version {
-			return &statuses[i]
-		}
-	}
-	return nil
-}
-
-// updateDeploymentStatusEntry updates or adds a deployment status entry
-func updateDeploymentStatusEntry(statuses []kuberikv1alpha1.DeploymentStatusEntry, environment, version, status string) []kuberikv1alpha1.DeploymentStatusEntry {
-	return updateDeploymentStatusEntryWithInfo(statuses, environment, version, status, nil, "")
-}
-
 // updateDeploymentStatusEntryWithInfo updates or adds a deployment status entry with full deployment info
 func updateDeploymentStatusEntryWithInfo(statuses []kuberikv1alpha1.DeploymentStatusEntry, environment, version, status string, deploymentID *int64, deploymentURL string) []kuberikv1alpha1.DeploymentStatusEntry {
 	// Find existing entry
@@ -1336,17 +1300,6 @@ func removeDeploymentStatusEntries(statuses []kuberikv1alpha1.DeploymentStatusEn
 	return result
 }
 
-// getDeploymentStatusesByEnvironment returns all status entries for a given environment
-func getDeploymentStatusesByEnvironment(statuses []kuberikv1alpha1.DeploymentStatusEntry, environment string) map[string]string {
-	result := make(map[string]string)
-	for _, entry := range statuses {
-		if entry.Environment == environment {
-			result[entry.Version] = entry.Status
-		}
-	}
-	return result
-}
-
 // deploymentStatusesEqual compares two deployment status lists for equality
 func deploymentStatusesEqual(a, b []kuberikv1alpha1.DeploymentStatusEntry) bool {
 	if len(a) != len(b) {
@@ -1372,16 +1325,6 @@ func deploymentStatusesEqual(a, b []kuberikv1alpha1.DeploymentStatusEntry) bool 
 		}
 	}
 	return true
-}
-
-// findEnvironmentInfo finds an environment info entry by environment name
-func findEnvironmentInfo(infos []kuberikv1alpha1.EnvironmentInfo, environment string) *kuberikv1alpha1.EnvironmentInfo {
-	for i := range infos {
-		if infos[i].Environment == environment {
-			return &infos[i]
-		}
-	}
-	return nil
 }
 
 // updateEnvironmentInfoWithRelationship updates or adds an environment info entry

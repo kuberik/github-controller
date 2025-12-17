@@ -1093,6 +1093,7 @@ var _ = Describe("Deployment Controller", func() {
 						Name: "test-rollout-status",
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
+						Backend: "github",
 						Project: "kuberik/github-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status",
