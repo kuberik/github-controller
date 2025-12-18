@@ -474,7 +474,7 @@ var _ = Describe("Deployment Controller", func() {
 						},
 						BackendConfig: kuberikv1alpha1.BackendConfig{
 							Backend: "github",
-							Project: "kuberik/github-controller-testing",
+							Project: "kuberik/deployment-controller-testing",
 						},
 						DeploymentName: "kuberik-test-deployment",
 						Environment:    "production",
@@ -482,7 +482,7 @@ var _ = Describe("Deployment Controller", func() {
 				}
 
 				Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-				Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/github-controller-testing"))
+				Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/deployment-controller-testing"))
 				Expect(deployment.Spec.DeploymentName).To(Equal("kuberik-test-deployment"))
 				Expect(deployment.Spec.Environment).To(Equal("production"))
 			})
@@ -494,7 +494,7 @@ var _ = Describe("Deployment Controller", func() {
 			// Clean up GitHub deployments before each integration test
 			if os.Getenv("GITHUB_TOKEN") != "" {
 				By("Cleaning up GitHub deployments before test")
-				cleanupDeployments("kuberik/github-controller-testing")
+				cleanupDeployments("kuberik/deployment-controller-testing")
 			}
 		})
 
@@ -550,7 +550,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment",
 					Environment:    "production",
@@ -607,7 +607,7 @@ var _ = Describe("Deployment Controller", func() {
 			githubClient := github.NewClient(tc)
 
 			// Get the deployment from GitHub API
-			ghDeployment, _, err := githubClient.Repositories.GetDeployment(context.Background(), "kuberik", "github-controller-testing", *updatedDeployment.Status.DeploymentID)
+			ghDeployment, _, err := githubClient.Repositories.GetDeployment(context.Background(), "kuberik", "deployment-controller-testing", *updatedDeployment.Status.DeploymentID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(ghDeployment).ToNot(BeNil())
 			Expect(ghDeployment.Ref).ToNot(BeNil())
@@ -617,7 +617,7 @@ var _ = Describe("Deployment Controller", func() {
 
 			By("Verifying GitHub deployment status was created")
 			// Get deployment statuses
-			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", *updatedDeployment.Status.DeploymentID, &github.ListOptions{})
+			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "deployment-controller-testing", *updatedDeployment.Status.DeploymentID, &github.ListOptions{})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(statuses).ToNot(BeEmpty())
 
@@ -689,7 +689,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status",
 					Environment:    "production",
@@ -727,7 +727,7 @@ var _ = Describe("Deployment Controller", func() {
 			tc := oauth2.NewClient(context.Background(), ts)
 			githubClient := github.NewClient(tc)
 
-			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "github-controller-testing", initialDeploymentID, &github.ListOptions{})
+			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "deployment-controller-testing", initialDeploymentID, &github.ListOptions{})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(statuses).ToNot(BeEmpty())
 			initialStatusCount := len(statuses)
@@ -799,7 +799,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-update",
 					Environment:    "production",
@@ -877,7 +877,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-missing-rollout",
 					Environment:    "production",
@@ -947,7 +947,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-no-revision",
 					Environment:    "production",
@@ -1008,7 +1008,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-empty-history",
 					Environment:    "production",
@@ -1094,7 +1094,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status",
 					Environment:    "production",
@@ -1155,7 +1155,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging deployment
@@ -1164,7 +1164,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with release candidates")
@@ -1217,7 +1217,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-deps",
 					Environment:    "production",
@@ -1320,7 +1320,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status-tracking",
 					Environment:    "production",
@@ -1397,7 +1397,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging
@@ -1406,7 +1406,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -1452,7 +1452,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-relevant",
 					Environment:    "production",
@@ -1556,7 +1556,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status-update",
 					Environment:    "production",
@@ -1711,7 +1711,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status-remove",
 					Environment:    "production",
@@ -1811,7 +1811,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging
@@ -1820,7 +1820,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -1866,7 +1866,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-status-env",
 					Environment:    "production",
@@ -1957,7 +1957,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			successState := "success"
@@ -1965,7 +1965,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create qa deployment (unrelated)
@@ -1978,10 +1978,10 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "github-controller-testing", qaDeploymentRequest)
+			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", qaDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "github-controller-testing", qaDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", qaDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -2027,7 +2027,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 					DeploymentName: "kuberik-test-deployment-relevant-graph",
 					Environment:    "production",

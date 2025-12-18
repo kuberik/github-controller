@@ -134,13 +134,13 @@ var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 					Environment:    "production",
 					BackendConfig: kuberikv1alpha1.BackendConfig{
 						Backend: "github",
-						Project: "kuberik/github-controller-testing",
+						Project: "kuberik/deployment-controller-testing",
 					},
 				},
 			}
 
 			Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/github-controller-testing"))
+			Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/deployment-controller-testing"))
 			Expect(deployment.Spec.DeploymentName).To(Equal("test-deployment"))
 			Expect(deployment.Spec.Environment).To(Equal("production"))
 		})
