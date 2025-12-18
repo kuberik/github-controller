@@ -24,16 +24,26 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// RelationshipType defines the type of relationship between environments
+type RelationshipType string
+
+const (
+	// RelationshipTypeAfter means this environment deploys after the related environment
+	RelationshipTypeAfter RelationshipType = "After"
+	// RelationshipTypeParallel means this environment deploys in parallel with the related environment
+	RelationshipTypeParallel RelationshipType = "Parallel"
+)
+
 // DeploymentRelationship defines a relationship to another environment
 type DeploymentRelationship struct {
 	// Environment is the environment name this deployment relates to
 	// +required
 	Environment string `json:"environment"`
 
-	// Type is the type of relationship: "after" or "togetherWith"
+	// Type is the type of relationship: "After" or "Parallel"
 	// +required
-	// +kubebuilder:validation:Enum=after;togetherWith
-	Type string `json:"type"`
+	// +kubebuilder:validation:Enum=After;Parallel
+	Type RelationshipType `json:"type"`
 }
 
 // BackendConfig contains backend-specific configuration

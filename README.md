@@ -6,7 +6,7 @@ A Kubernetes controller for managing deployments across different backends. Curr
 
 - **Multi-Backend Support**: Generic Deployment API that can support multiple backends (currently GitHub)
 - **GitHub Deployment Integration**: Creates and manages GitHub deployments for Deployment resources
-- **Relationship Management**: Manages deployment relationships between environments (after, togetherWith)
+- **Relationship Management**: Manages deployment relationships between environments (After, Parallel)
 - **Status Reporting**: Reports deployment status back to GitHub Deployments API
 - **Automatic RolloutGate Creation**: Automatically creates and manages RolloutGate resources
 
@@ -49,10 +49,8 @@ spec:
 
   # Relationship configuration
   relationship:
-    type: "after"
-    environments:
-      - "staging"
-      - "testing"
+    type: "After"
+    environment: "staging"
 
   # Backend-specific configuration
   backendConfig:
@@ -77,8 +75,8 @@ spec:
 - `environment`: Environment name (e.g., "production", "staging")
 - `ref`: Git reference (branch, tag, or SHA) - defaults to the revision from Rollout history
 - `relationship`: Defines relationship to other environments
-  - `type`: "after" or "togetherWith"
-  - `environments`: List of environment names this deployment relates to
+  - `type`: "After" or "Parallel"
+  - `environment`: Environment name this deployment relates to
 - `requeueInterval`: Interval for reconciliation (default: "1m")
 
 ## GitHub Token Secret
@@ -196,8 +194,8 @@ type BackendConfig struct {
 
 ```go
 type DeploymentRelationship struct {
-    Type         string   `json:"type"` // "after" or "togetherWith"
-    Environments []string `json:"environments"`
+    Environment string           `json:"environment"`
+    Type        RelationshipType `json:"type"` // "After" or "Parallel"
 }
 ```
 

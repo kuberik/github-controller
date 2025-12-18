@@ -76,10 +76,10 @@ spec:
                       relates to
                     type: string
                   type:
-                    description: 'Type is the type of relationship: "after" or "togetherWith"'
+                    description: 'Type is the type of relationship: "After" or "Parallel"'
                     enum:
-                    - after
-                    - togetherWith
+                    - After
+                    - Parallel
                     type: string
                 required:
                 - environment
@@ -250,11 +250,11 @@ spec:
                             relates to
                           type: string
                         type:
-                          description: 'Type is the type of relationship: "after"
-                            or "togetherWith"'
+                          description: 'Type is the type of relationship: "After"
+                            or "Parallel"'
                           enum:
-                          - after
-                          - togetherWith
+                          - After
+                          - Parallel
                           type: string
                       required:
                       - environment

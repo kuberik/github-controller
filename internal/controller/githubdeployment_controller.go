@@ -772,10 +772,11 @@ func (r *GitHubDeploymentReconciler) applyRolloutGateDesiredState(rolloutGate *k
 	var description string
 	if deployment.Spec.Relationship != nil {
 		relType := "deployed"
-		if deployment.Spec.Relationship.Type == "after" {
+		switch deployment.Spec.Relationship.Type {
+		case kuberikv1alpha1.RelationshipTypeAfter:
 			relType = "deployed after"
-		} else if deployment.Spec.Relationship.Type == "togetherWith" {
-			relType = "deployed together with"
+		case kuberikv1alpha1.RelationshipTypeParallel:
+			relType = "deployed in parallel with"
 		}
 		description = fmt.Sprintf("This gate is passing only for those versions that have been successfully %s the %s environment.", relType, deployment.Spec.Relationship.Environment)
 	} else {
@@ -924,7 +925,7 @@ func (r *GitHubDeploymentReconciler) createOrUpdateRolloutGate(ctx context.Conte
 // updateAllowedVersionsFromRelationships checks deployment relationships and updates allowed versions on RolloutGate
 // It also tracks deployment statuses and environment info for all related environments
 // Version relevance is determined by relationships: we track versions that are relevant to the current environment
-// based on "after" and "togetherWith" relationships
+// based on "After" and "Parallel" relationships
 func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx context.Context, deployment *kuberikv1alpha1.Deployment, client *github.Client) error {
 	// Get the referenced Rollout to access releaseCandidates
 	rollout, err := r.getReferencedRollout(ctx, deployment)
@@ -1117,8 +1118,8 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 			if deployment.Spec.Relationship != nil {
 				relatedEnv := deployment.Spec.Relationship.Environment
 				if envName == relatedEnv {
-					// For "after" relationship: version must be successfully deployed in related environment
-					// For "togetherWith" relationship: version must be successfully deployed in related environment
+					// For "After" relationship: version must be successfully deployed in related environment
+					// For "Parallel" relationship: version must be successfully deployed in related environment
 					for _, status := range statuses {
 						if status.State != nil && *status.State == "success" {
 							// Match revision to tag in releaseCandidates

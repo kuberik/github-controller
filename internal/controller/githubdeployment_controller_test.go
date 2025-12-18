@@ -1223,7 +1223,7 @@ var _ = Describe("Deployment Controller", func() {
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
-						Type:        "after",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
 				},
 			}
@@ -1458,7 +1458,7 @@ var _ = Describe("Deployment Controller", func() {
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
-						Type:        "after",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
 				},
 			}
@@ -1872,7 +1872,7 @@ var _ = Describe("Deployment Controller", func() {
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
-						Type:        "after",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
 				},
 			}
@@ -2033,7 +2033,7 @@ var _ = Describe("Deployment Controller", func() {
 					Environment:    "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
-						Type:        "after",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
 				},
 			}
