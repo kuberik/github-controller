@@ -93,8 +93,8 @@ func (r *GitHubDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Validate backend
-	if deployment.Spec.BackendConfig.Backend != "github" {
-		return ctrl.Result{}, fmt.Errorf("unsupported backend: %s", deployment.Spec.BackendConfig.Backend)
+	if deployment.Spec.Backend.Type != "github" {
+		return ctrl.Result{}, fmt.Errorf("unsupported backend: %s", deployment.Spec.Backend.Type)
 	}
 
 	// Get the referenced Rollout to get the current version
@@ -210,7 +210,7 @@ func (r *GitHubDeploymentReconciler) getReferencedRollout(ctx context.Context, d
 // The client uses ghcache for conditional requests with caching to reduce API rate limit consumption
 // ghcache automatically partitions the cache by auth header, ensuring proper token isolation
 func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, deployment *kuberikv1alpha1.Deployment) (*github.Client, error) {
-	secretName := deployment.Spec.BackendConfig.BackendSecret
+	secretName := deployment.Spec.Backend.Secret
 	if secretName == "" {
 		secretName = "github-token" // Default secret name
 	}
@@ -246,12 +246,12 @@ func (r *GitHubDeploymentReconciler) getGitHubClient(ctx context.Context, deploy
 
 // createDeploymentStatus creates a deployment status for the given deployment
 func (r *GitHubDeploymentReconciler) createDeploymentStatus(ctx context.Context, client *github.Client, deployment *kuberikv1alpha1.Deployment, deploymentID int64, state string, description string) error {
-	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.Backend.Project)
 	if err != nil {
 		return err
 	}
 
-	deploymentName := deployment.Spec.DeploymentName
+	deploymentName := deployment.Spec.Name
 	if err := validateDeploymentName(deploymentName); err != nil {
 		return err
 	}
@@ -564,12 +564,12 @@ func (r *GitHubDeploymentReconciler) extractDeploymentKey(dep *github.Deployment
 // deployment's ID and URL for status bookkeeping on the CR, and a map of version -> deployment info
 // for versions currently in history.
 func (r *GitHubDeploymentReconciler) syncDeploymentHistory(ctx context.Context, gh *github.Client, deployment *kuberikv1alpha1.Deployment, rollout *kuberikrolloutv1alpha1.Rollout) (*int64, string, map[string]versionDeploymentInfo, error) {
-	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.Backend.Project)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	deploymentName := deployment.Spec.DeploymentName
+	deploymentName := deployment.Spec.Name
 	if err := validateDeploymentName(deploymentName); err != nil {
 		return nil, "", nil, err
 	}
@@ -941,12 +941,12 @@ func (r *GitHubDeploymentReconciler) updateAllowedVersionsFromRelationships(ctx 
 		}
 	}
 
-	owner, repo, err := parseProject(deployment.Spec.BackendConfig.Project)
+	owner, repo, err := parseProject(deployment.Spec.Backend.Project)
 	if err != nil {
 		return err
 	}
 
-	deploymentName := deployment.Spec.DeploymentName
+	deploymentName := deployment.Spec.Name
 	if err := validateDeploymentName(deploymentName); err != nil {
 		return err
 	}

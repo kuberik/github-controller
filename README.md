@@ -43,7 +43,7 @@ spec:
     name: myapp-rollout
 
   # Deployment configuration
-  deploymentName: "kuberik-myapp-production"
+  name: "kuberik-myapp-production"
   environment: "production"
   ref: "main"
 
@@ -53,10 +53,10 @@ spec:
     environment: "staging"
 
   # Backend-specific configuration
-  backendConfig:
-    backend: "github"
+  backend:
+    type: "github"
     project: "myorg/myapp"
-    backendSecret: "github-token"
+    secret: "github-token"
 ```
 
 ## Deployment Spec
@@ -64,11 +64,11 @@ spec:
 ### Required Fields
 
 - `rolloutRef`: Reference to the Rollout resource
-- `deploymentName`: Name of the deployment (must start with "kuberik" prefix for GitHub backend)
-- `backendConfig`: Backend-specific configuration
-  - `backend`: Backend type (currently only "github" is supported)
+- `name`: Name of the deployment (must start with "kuberik" prefix for GitHub backend)
+- `backend`: Backend-specific configuration
+  - `type`: Backend type (currently only "github" is supported)
   - `project`: Project identifier (for GitHub: "owner/repo")
-  - `backendSecret`: Name of the secret containing backend token (optional, default: "github-token" for GitHub)
+  - `secret`: Name of the secret containing backend token (optional, default: "github-token" for GitHub)
 
 ### Optional Fields
 
@@ -175,18 +175,18 @@ make run
 ```go
 type DeploymentSpec struct {
     RolloutRef       corev1.LocalObjectReference `json:"rolloutRef"`
-    DeploymentName   string                  `json:"deploymentName"`
+    Name             string                  `json:"name"`
     Environment      string                  `json:"environment,omitempty"`
     Ref              string                  `json:"ref,omitempty"`
     Relationship     *DeploymentRelationship `json:"relationship,omitempty"`
-    BackendConfig    BackendConfig           `json:"backendConfig"`
+    Backend          BackendConfig           `json:"backend"`
     RequeueInterval  string                  `json:"requeueInterval,omitempty"`
 }
 
 type BackendConfig struct {
-    Backend          string   `json:"backend"`
+    Type             string   `json:"type"`
     Project          string   `json:"project"`
-    BackendSecret    string   `json:"backendSecret,omitempty"`
+    Secret           string   `json:"secret,omitempty"`
 }
 ```
 

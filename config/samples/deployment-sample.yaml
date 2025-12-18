@@ -9,7 +9,7 @@ spec:
     name: myapp-rollout
 
   # Deployment configuration
-  deploymentName: "kuberik-myapp-production"
+  name: "kuberik-myapp-production"
   environment: "production"
   ref: "main"
 
@@ -21,7 +21,7 @@ spec:
       - "testing"
 
   # Backend-specific configuration
-  backendConfig:
-    backend: "github"
+  backend:
+    type: "github"
     project: "myorg/myapp"
-    backendSecret: "github-token"
+    secret: "github-token"

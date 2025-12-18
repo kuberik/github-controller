@@ -130,18 +130,18 @@ var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
-					DeploymentName: "test-deployment",
-					Environment:    "production",
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Name:        "test-deployment",
+					Environment: "production",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
 				},
 			}
 
 			Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/deployment-controller-testing"))
-			Expect(deployment.Spec.DeploymentName).To(Equal("test-deployment"))
+			Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/deployment-controller-testing"))
+			Expect(deployment.Spec.Name).To(Equal("test-deployment"))
 			Expect(deployment.Spec.Environment).To(Equal("production"))
 		})
 	})

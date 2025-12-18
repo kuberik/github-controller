@@ -472,18 +472,18 @@ var _ = Describe("Deployment Controller", func() {
 						RolloutRef: corev1.LocalObjectReference{
 							Name: "test-rollout",
 						},
-						BackendConfig: kuberikv1alpha1.BackendConfig{
-							Backend: "github",
+						Backend: kuberikv1alpha1.BackendConfig{
+							Type:    "github",
 							Project: "kuberik/deployment-controller-testing",
 						},
-						DeploymentName: "kuberik-test-deployment",
-						Environment:    "production",
+						Name:        "kuberik-test-deployment",
+						Environment: "production",
 					},
 				}
 
 				Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-				Expect(deployment.Spec.BackendConfig.Project).To(Equal("kuberik/deployment-controller-testing"))
-				Expect(deployment.Spec.DeploymentName).To(Equal("kuberik-test-deployment"))
+				Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/deployment-controller-testing"))
+				Expect(deployment.Spec.Name).To(Equal("kuberik-test-deployment"))
 				Expect(deployment.Spec.Environment).To(Equal("production"))
 			})
 		})
@@ -548,12 +548,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -687,12 +687,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-change",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -797,12 +797,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-update",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-update",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-update",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -875,12 +875,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "non-existent-rollout",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-missing-rollout",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-missing-rollout",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -945,12 +945,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-no-revision",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-no-revision",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-no-revision",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -1006,12 +1006,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-empty-history",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-empty-history",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-empty-history",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -1092,12 +1092,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -1215,12 +1215,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-deps",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-deps",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-deps",
+					Environment: "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
@@ -1318,12 +1318,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-tracking",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status-tracking",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status-tracking",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -1450,12 +1450,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-relevant",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-relevant",
+					Environment: "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
@@ -1554,12 +1554,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-update",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status-update",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status-update",
+					Environment: "production",
 				},
 			}
 			k8sClient.Delete(context.Background(), deployment)
@@ -1709,12 +1709,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-remove",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status-remove",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status-remove",
+					Environment: "production",
 				},
 			}
 			// Delete if exists first
@@ -1864,12 +1864,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-env",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-status-env",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-status-env",
+					Environment: "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
@@ -2025,12 +2025,12 @@ var _ = Describe("Deployment Controller", func() {
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant-graph",
 					},
-					BackendConfig: kuberikv1alpha1.BackendConfig{
-						Backend: "github",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					DeploymentName: "kuberik-test-deployment-relevant-graph",
-					Environment:    "production",
+					Name:        "kuberik-test-deployment-relevant-graph",
+					Environment: "production",
 					Relationship: &kuberikv1alpha1.DeploymentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
