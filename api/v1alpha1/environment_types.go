@@ -69,7 +69,7 @@ type EnvironmentSpec struct {
 	// +required
 	RolloutRef corev1.LocalObjectReference `json:"rolloutRef"`
 
-	// Name is the name of the GitHub deployment (must start with "kuberik" prefix for GitHub backend)
+	// Name is the name of the GitHub deployment (the "kuberik" prefix will be automatically added for GitHub backend if not already present)
 	// +required
 	Name string `json:"name"`
 

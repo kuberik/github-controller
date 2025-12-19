@@ -64,7 +64,7 @@ spec:
 ### Required Fields
 
 - `rolloutRef`: Reference to the Rollout resource
-- `name`: Name of the deployment (must start with "kuberik" prefix for GitHub backend)
+- `name`: Name of the deployment (the "kuberik" prefix will be automatically added for GitHub backend)
 - `backend`: Backend-specific configuration
   - `type`: Backend type (currently only "github" is supported)
   - `project`: Project identifier (for GitHub: "owner/repo")
@@ -97,7 +97,7 @@ data:
 ## Requirements
 
 - The referenced `Rollout` must have deployment history with a `Revision` field in the `VersionInfo` structure
-- For GitHub backend, deployment names must start with "kuberik" prefix
+- For GitHub backend, the "kuberik" prefix will be automatically added to deployment names if not already present
 - If the revision is not available, the controller will requeue and wait
 
 ## How It Works

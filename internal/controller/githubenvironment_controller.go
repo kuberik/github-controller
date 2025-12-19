@@ -251,10 +251,8 @@ func (r *GitHubEnvironmentReconciler) createDeploymentStatus(ctx context.Context
 		return err
 	}
 
-	deploymentName := environment.Spec.Name
-	if err := validateDeploymentName(deploymentName); err != nil {
-		return err
-	}
+	// Ensure deployment name has kuberik prefix for GitHub
+	deploymentName := ensureKuberikPrefix(environment.Spec.Name)
 	// Format environment as "deploymentName/environment" for GitHub
 	formattedEnv := formatDeploymentEnvironment(deploymentName, environment.Spec.Environment)
 
@@ -390,12 +388,12 @@ func parseProject(project string) (owner, repo string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// validateDeploymentName validates that the deployment name starts with "kuberik" prefix
-func validateDeploymentName(deploymentName string) error {
-	if !strings.HasPrefix(deploymentName, "kuberik") {
-		return fmt.Errorf("GitHub deployment name must start with 'kuberik' prefix, got: %s", deploymentName)
+// ensureKuberikPrefix ensures the deployment name starts with "kuberik" prefix, adding it if missing
+func ensureKuberikPrefix(deploymentName string) string {
+	if strings.HasPrefix(deploymentName, "kuberik/") {
+		return deploymentName
 	}
-	return nil
+	return "kuberik/" + deploymentName
 }
 
 // getControllerNamespace gets the namespace where the controller is running.
@@ -569,10 +567,8 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 		return nil, "", nil, err
 	}
 
-	deploymentName := environment.Spec.Name
-	if err := validateDeploymentName(deploymentName); err != nil {
-		return nil, "", nil, err
-	}
+	// Ensure deployment name has kuberik prefix for GitHub
+	deploymentName := ensureKuberikPrefix(environment.Spec.Name)
 	formattedEnv := formatDeploymentEnvironment(deploymentName, environment.Spec.Environment)
 	task := formatDeploymentTask(deploymentName)
 
@@ -946,10 +942,8 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 		return err
 	}
 
-	deploymentName := environment.Spec.Name
-	if err := validateDeploymentName(deploymentName); err != nil {
-		return err
-	}
+	// Ensure deployment name has kuberik prefix for GitHub
+	deploymentName := ensureKuberikPrefix(environment.Spec.Name)
 
 	// Build relationship graph to determine relevant environments
 	// Relevant environments are: current environment + all environments related to it (directly or transitively)

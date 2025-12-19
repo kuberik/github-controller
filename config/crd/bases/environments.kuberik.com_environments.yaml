@@ -64,8 +64,9 @@ spec:
                   "staging")
                 type: string
               name:
-                description: Name is the name of the GitHub deployment (must start
-                  with "kuberik" prefix for GitHub backend)
+                description: Name is the name of the GitHub deployment (the "kuberik"
+                  prefix will be automatically added for GitHub backend if not already
+                  present)
                 type: string
               relationship:
                 description: Relationship defines how this environment relates to
