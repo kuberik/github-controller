@@ -1,9 +1,0 @@
-apiVersion: deployments.kuberik.com/v1alpha1
-kind: Deployment
-metadata:
-  labels:
-    app.kubernetes.io/name: deployment-controller
-    app.kubernetes.io/managed-by: kustomize
-  name: deployment-sample
-spec:
-  # TODO(user): Add fields here

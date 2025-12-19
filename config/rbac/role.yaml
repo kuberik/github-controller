@@ -14,9 +14,9 @@ rules:
   - list
   - watch
 - apiGroups:
-  - deployments.kuberik.com
+  - environments.kuberik.com
   resources:
-  - deployments
+  - environments
   verbs:
   - create
   - delete
@@ -26,15 +26,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - deployments.kuberik.com
+  - environments.kuberik.com
   resources:
-  - deployments/finalizers
+  - environments/finalizers
   verbs:
   - update
 - apiGroups:
-  - deployments.kuberik.com
+  - environments.kuberik.com
   resources:
-  - deployments/status
+  - environments/status
   verbs:
   - get
   - patch

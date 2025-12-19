@@ -1,4 +1,4 @@
-module github.com/kuberik/deployment-controller
+module github.com/kuberik/environment-controller
 
 go 1.25
 
@@ -107,4 +107,4 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace github.com/kuberik/deployment-controller => .
+replace github.com/kuberik/environment-controller => .

@@ -1,7 +1,7 @@
-apiVersion: deployments.kuberik.com/v1alpha1
-kind: Deployment
+apiVersion: environments.kuberik.com/v1alpha1
+kind: Environment
 metadata:
-  name: deployment-sample
+  name: environment-sample
   namespace: default
 spec:
   # Reference to the Rollout that this Deployment manages

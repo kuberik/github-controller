@@ -1,7 +1,7 @@
-# This rule is not used by the deployment-controller itself.
+# This rule is not used by the environment-controller itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants permissions to create, update, and delete resources within the deployments.kuberik.com.
+# Grants permissions to create, update, and delete resources within the environments.kuberik.com.
 # This role is intended for users who need to manage these resources
 # but should not control RBAC or manage permissions for others.
 
@@ -9,14 +9,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: deployment-controller
+    app.kubernetes.io/name: environment-controller
     app.kubernetes.io/managed-by: kustomize
-  name: deployment-editor-role
+  name: environment-editor-role
 rules:
 - apiGroups:
-  - deployments.kuberik.com
+  - environments.kuberik.com
   resources:
-  - deployments
+  - environments
   verbs:
   - create
   - delete
@@ -26,8 +26,8 @@ rules:
   - update
   - watch
 - apiGroups:
-  - deployments.kuberik.com
+  - environments.kuberik.com
   resources:
-  - deployments/status
+  - environments/status
   verbs:
   - get

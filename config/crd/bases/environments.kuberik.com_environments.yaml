@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: deployments.deployments.kuberik.com
+  name: environments.environments.kuberik.com
 spec:
-  group: deployments.kuberik.com
+  group: environments.kuberik.com
   names:
-    kind: Deployment
-    listKind: DeploymentList
-    plural: deployments
-    singular: deployment
+    kind: Environment
+    listKind: EnvironmentList
+    plural: environments
+    singular: environment
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Deployment is the Schema for the deployments API
+        description: Environment is the Schema for the environments API
         properties:
           apiVersion:
             description: |-
@@ -37,42 +37,42 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Deployment
+            description: spec defines the desired state of Environment
             properties:
-              backendConfig:
-                description: BackendConfig contains backend-specific configuration
+              backend:
+                description: Backend contains backend-specific configuration
                 properties:
-                  backend:
-                    description: Backend specifies the deployment backend to use (e.g.,
-                      "github")
-                    enum:
-                    - github
-                    type: string
-                  backendSecret:
-                    description: BackendSecret is the name of the Kubernetes Secret
-                      containing the backend authentication token
-                    type: string
                   project:
                     description: Project is the project identifier (backend-specific
                       format, e.g., "owner/repo" for GitHub)
                     type: string
+                  secret:
+                    description: Secret is the name of the Kubernetes Secret containing
+                      the backend authentication token
+                    type: string
+                  type:
+                    description: Type specifies the backend to use (e.g., "github")
+                    enum:
+                    - github
+                    type: string
                 required:
-                - backend
                 - project
+                - type
                 type: object
-              deploymentName:
-                description: DeploymentName is the name of the deployment
-                type: string
               environment:
-                description: Environment is the deployment environment (e.g., "production",
+                description: Environment is the environment name (e.g., "production",
                   "staging")
                 type: string
+              name:
+                description: Name is the name of the GitHub deployment (must start
+                  with "kuberik" prefix for GitHub backend)
+                type: string
               relationship:
-                description: Relationship defines how this deployment relates to another
-                  environment
+                description: Relationship defines how this environment relates to
+                  another environment
                 properties:
                   environment:
-                    description: Environment is the environment name this deployment
+                    description: Environment is the environment name this environment
                       relates to
                     type: string
                   type:
@@ -87,12 +87,12 @@ spec:
                 type: object
               requeueInterval:
                 description: |-
-                  RequeueInterval specifies how often the controller should reconcile this Deployment
+                  RequeueInterval specifies how often the controller should reconcile this Environment
                   If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
                 pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
                 type: string
               rolloutRef:
-                description: RolloutRef is a reference to the Rollout that this Deployment
+                description: RolloutRef is a reference to the Rollout that this Environment
                   manages
                 properties:
                   name:
@@ -107,16 +107,16 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
             required:
-            - backendConfig
-            - deploymentName
+            - backend
+            - name
             - rolloutRef
             type: object
           status:
-            description: status defines the observed state of Deployment
+            description: status defines the observed state of Environment
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the Deployment resource.
+                  conditions represent the current state of the Environment resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -195,7 +195,7 @@ spec:
                   DeploymentStatuses tracks deployment statuses per version and environment.
                   Only versions that are relevant based on environment relationships are tracked.
                 items:
-                  description: DeploymentStatusEntry represents a deployment status
+                  description: EnvironmentStatusEntry represents a deployment status
                     for a specific version in an environment.
                   properties:
                     deploymentId:
@@ -206,8 +206,8 @@ spec:
                       description: DeploymentURL is the URL of the deployment (backend-specific)
                       type: string
                     environment:
-                      description: Environment is the deployment environment (e.g.,
-                        "production", "staging")
+                      description: Environment is the environment name (e.g., "production",
+                        "staging")
                       type: string
                     status:
                       description: Status is the deployment status state (e.g., "success",
@@ -246,7 +246,7 @@ spec:
                         to another environment
                       properties:
                         environment:
-                          description: Environment is the environment name this deployment
+                          description: Environment is the environment name this environment
                             relates to
                           type: string
                         type:

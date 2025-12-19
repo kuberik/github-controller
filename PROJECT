@@ -6,16 +6,16 @@ cliVersion: 4.8.0
 domain: kuberik.com
 layout:
 - go.kubebuilder.io/v4
-projectName: deployment-controller
-repo: github.com/kuberik/deployment-controller
+projectName: environment-controller
+repo: github.com/kuberik/environment-controller
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
   domain: kuberik.com
-  group: deployments
-  kind: Deployment
-  path: github.com/kuberik/deployment-controller/api/v1alpha1
+  group: environments
+  kind: Environment
+  path: github.com/kuberik/environment-controller/api/v1alpha1
   version: v1alpha1
 version: "3"

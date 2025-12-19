@@ -23,15 +23,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sptr "k8s.io/utils/ptr"
 
-	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
-var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
-	var reconciler *GitHubDeploymentReconciler
+var _ = Describe("GitHub Environment Controller Unit Tests", func() {
+	var reconciler *GitHubEnvironmentReconciler
 
 	BeforeEach(func() {
-		reconciler = &GitHubDeploymentReconciler{}
+		reconciler = &GitHubEnvironmentReconciler{}
 	})
 
 	Context("getCurrentVersionFromRollout", func() {
@@ -119,14 +119,14 @@ var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 		})
 	})
 
-	Context("Deployment validation", func() {
-		It("Should validate Deployment spec", func() {
-			deployment := &kuberikv1alpha1.Deployment{
+	Context("Environment validation", func() {
+		It("Should validate Environment spec", func() {
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
 					Namespace: "default",
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
@@ -134,13 +134,13 @@ var _ = Describe("GitHub Deployment Controller Unit Tests", func() {
 					Environment: "production",
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 				},
 			}
 
 			Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-			Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/deployment-controller-testing"))
+			Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/environment-controller-testing"))
 			Expect(deployment.Spec.Name).To(Equal("test-deployment"))
 			Expect(deployment.Spec.Environment).To(Equal("production"))
 		})

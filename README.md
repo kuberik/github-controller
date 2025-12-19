@@ -1,23 +1,23 @@
-# Deployment Controller
+# Environment Controller
 
-A Kubernetes controller for managing deployments across different backends. Currently implements GitHub backend integration that reports deployment status to GitHub's Deployments API and manages deployment relationships.
+A Kubernetes controller for managing environments and their relationships across different backends. Currently implements GitHub backend integration that reports deployment status to GitHub's Deployments API and manages environment relationships.
 
 ## Features
 
-- **Multi-Backend Support**: Generic Deployment API that can support multiple backends (currently GitHub)
-- **GitHub Deployment Integration**: Creates and manages GitHub deployments for Deployment resources
-- **Relationship Management**: Manages deployment relationships between environments (After, Parallel)
+- **Multi-Backend Support**: Generic Environment API that can support multiple backends (currently GitHub)
+- **GitHub Deployment Integration**: Creates and manages GitHub deployments for Environment resources
+- **Relationship Management**: Manages environment relationships between environments (After, Parallel)
 - **Status Reporting**: Reports deployment status back to GitHub Deployments API
 - **Automatic RolloutGate Creation**: Automatically creates and manages RolloutGate resources
 
 ## Architecture
 
-The controller manages Deployment resources and integrates with backend-specific implementations:
+The controller manages Environment resources and integrates with backend-specific implementations:
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Deployment    │    │  Deployment     │    │  GitHub Deploy  │
-│   (CRD)         │───▶│  Controller    │───▶│  API            │
+│   Environment   │    │  Environment    │    │  GitHub Deploy  │
+│   (CRD)          │───▶│  Controller     │───▶│  API            │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │
                                 ▼
@@ -29,20 +29,20 @@ The controller manages Deployment resources and integrates with backend-specific
 
 ## Configuration
 
-The controller uses the Deployment CRD for configuration:
+The controller uses the Environment CRD for configuration:
 
 ```yaml
-apiVersion: deployments.kuberik.com/v1alpha1
-kind: Deployment
+apiVersion: environments.kuberik.com/v1alpha1
+kind: Environment
 metadata:
   name: myapp-production
   namespace: default
 spec:
-  # Reference to the Rollout that this Deployment manages
+  # Reference to the Rollout that this Environment manages
   rolloutRef:
     name: myapp-rollout
 
-  # Deployment configuration
+  # Environment configuration
   name: "kuberik-myapp-production"
   environment: "production"
   ref: "main"
@@ -59,7 +59,7 @@ spec:
     secret: "github-token"
 ```
 
-## Deployment Spec
+## Environment Spec
 
 ### Required Fields
 
@@ -102,7 +102,7 @@ data:
 
 ## How It Works
 
-1. **Deployment Detection**: The controller watches for Deployment resources with the configured backend.
+1. **Environment Detection**: The controller watches for Environment resources with the configured backend.
 
 2. **Backend Validation**: The controller validates that the backend is supported (currently only "github").
 
@@ -114,7 +114,7 @@ data:
 
 6. **Status Reporting**: The deployment status is reported back to GitHub's Deployments API.
 
-7. **RolloutGate Management**: The controller automatically creates and manages RolloutGate resources for the Deployment.
+7. **RolloutGate Management**: The controller automatically creates and manages RolloutGate resources for the Environment.
 
 8. **Relationship Resolution**: If relationships are specified, the controller checks deployment statuses across environments to determine allowed versions.
 
@@ -143,7 +143,7 @@ data:
    kubectl apply -f config/samples/github-token-secret.yaml
    ```
 
-4. **Create Deployment resources**:
+4. **Create Environment resources**:
    ```bash
    kubectl apply -k config/samples/
    ```
@@ -170,17 +170,17 @@ make run
 
 ## API Reference
 
-### Deployment Spec
+### Environment Spec
 
 ```go
-type DeploymentSpec struct {
+type EnvironmentSpec struct {
     RolloutRef       corev1.LocalObjectReference `json:"rolloutRef"`
-    Name             string                  `json:"name"`
-    Environment      string                  `json:"environment,omitempty"`
-    Ref              string                  `json:"ref,omitempty"`
-    Relationship     *DeploymentRelationship `json:"relationship,omitempty"`
-    Backend          BackendConfig           `json:"backend"`
-    RequeueInterval  string                  `json:"requeueInterval,omitempty"`
+    Name             string                      `json:"name"`
+    Environment      string                      `json:"environment,omitempty"`
+    Ref              string                      `json:"ref,omitempty"`
+    Relationship     *EnvironmentRelationship    `json:"relationship,omitempty"`
+    Backend          BackendConfig               `json:"backend"`
+    RequeueInterval  string                      `json:"requeueInterval,omitempty"`
 }
 
 type BackendConfig struct {
@@ -190,23 +190,23 @@ type BackendConfig struct {
 }
 ```
 
-### DeploymentRelationship
+### EnvironmentRelationship
 
 ```go
-type DeploymentRelationship struct {
+type EnvironmentRelationship struct {
     Environment string           `json:"environment"`
     Type        RelationshipType `json:"type"` // "After" or "Parallel"
 }
 ```
 
-### Deployment Status
+### Environment Status
 
 ```go
-type DeploymentStatus struct {
-    DeploymentID  *int64                    `json:"deploymentId,omitempty"`
-    DeploymentURL string                    `json:"deploymentUrl,omitempty"`
-    Statuses      []DeploymentStatusEntry    `json:"statuses,omitempty"`
-    Environments  []EnvironmentInfo         `json:"environments,omitempty"`
+type EnvironmentStatus struct {
+    DeploymentID      *int64                    `json:"deploymentId,omitempty"`
+    DeploymentURL     string                    `json:"deploymentUrl,omitempty"`
+    DeploymentStatuses []EnvironmentStatusEntry  `json:"deploymentStatuses,omitempty"`
+    EnvironmentInfos  []EnvironmentInfo         `json:"environmentInfos,omitempty"`
 }
 ```
 

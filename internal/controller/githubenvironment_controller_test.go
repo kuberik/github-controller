@@ -35,11 +35,11 @@ import (
 	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	kuberikv1alpha1 "github.com/kuberik/deployment-controller/api/v1alpha1"
+	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
-var _ = Describe("Deployment Controller", func() {
+var _ = Describe("Environment Controller", func() {
 	const (
 		DeploymentNamespace = "default"
 		SecretName          = "github-token"
@@ -113,17 +113,17 @@ var _ = Describe("Deployment Controller", func() {
 	}
 
 	var (
-		reconciler *GitHubDeploymentReconciler
+		reconciler *GitHubEnvironmentReconciler
 	)
 
 	BeforeEach(func() {
-		reconciler = &GitHubDeploymentReconciler{
+		reconciler = &GitHubEnvironmentReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
 
 		// Clean up any existing resources
-		deploymentList := &kuberikv1alpha1.DeploymentList{}
+		deploymentList := &kuberikv1alpha1.EnvironmentList{}
 		if err := k8sClient.List(context.Background(), deploymentList); err == nil {
 			for i := range deploymentList.Items {
 				k8sClient.Delete(context.Background(), &deploymentList.Items[i])
@@ -462,19 +462,19 @@ var _ = Describe("Deployment Controller", func() {
 		})
 
 		Context("Deployment validation", func() {
-			It("Should validate Deployment spec", func() {
-				deployment := &kuberikv1alpha1.Deployment{
+			It("Should validate Environment spec", func() {
+				deployment := &kuberikv1alpha1.Environment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-deployment",
 						Namespace: "default",
 					},
-					Spec: kuberikv1alpha1.DeploymentSpec{
+					Spec: kuberikv1alpha1.EnvironmentSpec{
 						RolloutRef: corev1.LocalObjectReference{
 							Name: "test-rollout",
 						},
 						Backend: kuberikv1alpha1.BackendConfig{
 							Type:    "github",
-							Project: "kuberik/deployment-controller-testing",
+							Project: "kuberik/environment-controller-testing",
 						},
 						Name:        "kuberik-test-deployment",
 						Environment: "production",
@@ -482,7 +482,7 @@ var _ = Describe("Deployment Controller", func() {
 				}
 
 				Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
-				Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/deployment-controller-testing"))
+				Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/environment-controller-testing"))
 				Expect(deployment.Spec.Name).To(Equal("kuberik-test-deployment"))
 				Expect(deployment.Spec.Environment).To(Equal("production"))
 			})
@@ -494,11 +494,11 @@ var _ = Describe("Deployment Controller", func() {
 			// Clean up GitHub deployments before each integration test
 			if os.Getenv("GITHUB_TOKEN") != "" {
 				By("Cleaning up GitHub deployments before test")
-				cleanupDeployments("kuberik/deployment-controller-testing")
+				cleanupDeployments("kuberik/environment-controller-testing")
 			}
 		})
 
-		It("Should create RolloutGate when Deployment is created", func() {
+		It("Should create RolloutGate when Environment is created", func() {
 			skipIfNoGitHubToken()
 
 			By("Creating GitHub token secret")
@@ -538,19 +538,19 @@ var _ = Describe("Deployment Controller", func() {
 			}
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
-			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			By("Creating Environment")
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment",
 					Environment: "production",
@@ -574,7 +574,7 @@ var _ = Describe("Deployment Controller", func() {
 
 			By("Verifying GitHub deployment was created")
 			// Get the updated Deployment to check status
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment",
 				Namespace: DeploymentNamespace,
@@ -607,7 +607,7 @@ var _ = Describe("Deployment Controller", func() {
 			githubClient := github.NewClient(tc)
 
 			// Get the deployment from GitHub API
-			ghDeployment, _, err := githubClient.Repositories.GetDeployment(context.Background(), "kuberik", "deployment-controller-testing", *updatedDeployment.Status.DeploymentID)
+			ghDeployment, _, err := githubClient.Repositories.GetDeployment(context.Background(), "kuberik", "environment-controller-testing", *updatedDeployment.Status.DeploymentID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(ghDeployment).ToNot(BeNil())
 			Expect(ghDeployment.Ref).ToNot(BeNil())
@@ -617,7 +617,7 @@ var _ = Describe("Deployment Controller", func() {
 
 			By("Verifying GitHub deployment status was created")
 			// Get deployment statuses
-			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "deployment-controller-testing", *updatedDeployment.Status.DeploymentID, &github.ListOptions{})
+			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "environment-controller-testing", *updatedDeployment.Status.DeploymentID, &github.ListOptions{})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(statuses).ToNot(BeEmpty())
 
@@ -678,18 +678,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with passing=true")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status-change",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-change",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-status",
 					Environment: "production",
@@ -712,7 +712,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying initial deployment status")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status-change",
 				Namespace: DeploymentNamespace,
@@ -727,7 +727,7 @@ var _ = Describe("Deployment Controller", func() {
 			tc := oauth2.NewClient(context.Background(), ts)
 			githubClient := github.NewClient(tc)
 
-			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "deployment-controller-testing", initialDeploymentID, &github.ListOptions{})
+			statuses, _, err := githubClient.Repositories.ListDeploymentStatuses(context.Background(), "kuberik", "environment-controller-testing", initialDeploymentID, &github.ListOptions{})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(statuses).ToNot(BeEmpty())
 			initialStatusCount := len(statuses)
@@ -788,18 +788,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with passing=true")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-update",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-update",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-update",
 					Environment: "production",
@@ -822,7 +822,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying RolloutGate was created")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-update",
 				Namespace: DeploymentNamespace,
@@ -866,18 +866,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(createGitHubTokenSecret()).To(Succeed())
 
 			By("Creating Deployment with non-existent Rollout")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-missing-rollout",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "non-existent-rollout",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-missing-rollout",
 					Environment: "production",
@@ -936,18 +936,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-no-revision",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-no-revision",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-no-revision",
 					Environment: "production",
@@ -997,18 +997,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-empty-history",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-empty-history",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-empty-history",
 					Environment: "production",
@@ -1083,12 +1083,12 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status",
 					},
@@ -1117,7 +1117,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying Deployment status was updated")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status",
 				Namespace: DeploymentNamespace,
@@ -1155,7 +1155,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging deployment
@@ -1164,7 +1164,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with release candidates")
@@ -1206,22 +1206,22 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with relationship")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-deps",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-deps",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-deps",
 					Environment: "production",
-					Relationship: &kuberikv1alpha1.DeploymentRelationship{
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
@@ -1244,7 +1244,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying allowed versions were updated from relationships on RolloutGate")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-deps",
 				Namespace: DeploymentNamespace,
@@ -1309,18 +1309,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status-tracking",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-tracking",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-status-tracking",
 					Environment: "production",
@@ -1343,7 +1343,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying DeploymentStatuses were updated")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status-tracking",
 				Namespace: DeploymentNamespace,
@@ -1353,7 +1353,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(updatedDeployment.Status.DeploymentStatuses).ToNot(BeEmpty())
 
 			// Find status entries for production environment
-			productionStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1397,7 +1397,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging
@@ -1406,7 +1406,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -1441,22 +1441,22 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with relationship to staging")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-relevant",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-relevant",
 					Environment: "production",
-					Relationship: &kuberikv1alpha1.DeploymentRelationship{
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
@@ -1479,14 +1479,14 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying relevant versions are tracked")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-relevant",
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for staging environment (related environment)
-			stagingStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "staging" {
 					stagingStatuses = append(stagingStatuses, status)
@@ -1545,18 +1545,18 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status-update",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-update",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-status-update",
 					Environment: "production",
@@ -1578,13 +1578,13 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying DeploymentStatuses has entry for revision1")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status-update",
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1637,7 +1637,7 @@ var _ = Describe("Deployment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses = []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1700,12 +1700,12 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status-remove",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-remove",
 					},
@@ -1734,13 +1734,13 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying DeploymentStatuses has entries for both revisions")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status-remove",
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1773,7 +1773,7 @@ var _ = Describe("Deployment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses = []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1811,7 +1811,7 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
+			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create success status for staging
@@ -1820,7 +1820,7 @@ var _ = Describe("Deployment Controller", func() {
 				State:       &successState,
 				Description: github.String("Deployment successful"),
 			}
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", stagingDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", stagingDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -1855,12 +1855,12 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with relationship to staging")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-status-env",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-status-env",
 					},
@@ -1870,7 +1870,7 @@ var _ = Describe("Deployment Controller", func() {
 					},
 					Name:        "kuberik-test-deployment-status-env",
 					Environment: "production",
-					Relationship: &kuberikv1alpha1.DeploymentRelationship{
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
@@ -1893,14 +1893,14 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying DeploymentStatuses has entries for both production and staging")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-status-env",
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for production (current environment)
-			productionStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "production" {
 					productionStatuses = append(productionStatuses, status)
@@ -1909,7 +1909,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(len(productionStatuses)).To(BeNumerically(">=", 1))
 
 			// Should have status entries for staging (related environment)
-			stagingStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "staging" {
 					stagingStatuses = append(stagingStatuses, status)
@@ -1978,10 +1978,10 @@ var _ = Describe("Deployment Controller", func() {
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
 			}
-			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", qaDeploymentRequest)
+			qaDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", qaDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
 
-			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "deployment-controller-testing", qaDeployment.GetID(), statusRequest)
+			_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", qaDeployment.GetID(), statusRequest)
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Creating Rollout with history")
@@ -2016,22 +2016,22 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
 
 			By("Creating Deployment with relationship to staging (not qa)")
-			deployment := &kuberikv1alpha1.Deployment{
+			deployment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-github-deployment-relevant-graph",
 					Namespace: DeploymentNamespace,
 				},
-				Spec: kuberikv1alpha1.DeploymentSpec{
+				Spec: kuberikv1alpha1.EnvironmentSpec{
 					RolloutRef: corev1.LocalObjectReference{
 						Name: "test-rollout-relevant-graph",
 					},
 					Backend: kuberikv1alpha1.BackendConfig{
 						Type:    "github",
-						Project: "kuberik/deployment-controller-testing",
+						Project: "kuberik/environment-controller-testing",
 					},
 					Name:        "kuberik-test-deployment-relevant-graph",
 					Environment: "production",
-					Relationship: &kuberikv1alpha1.DeploymentRelationship{
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
 						Type:        kuberikv1alpha1.RelationshipTypeAfter,
 					},
@@ -2054,14 +2054,14 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(time.Minute))
 
 			By("Verifying only relevant versions are tracked")
-			updatedDeployment := &kuberikv1alpha1.Deployment{}
+			updatedDeployment := &kuberikv1alpha1.Environment{}
 			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 				Name:      "test-github-deployment-relevant-graph",
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for staging (related)
-			stagingStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "staging" {
 					stagingStatuses = append(stagingStatuses, status)
@@ -2070,7 +2070,7 @@ var _ = Describe("Deployment Controller", func() {
 			Expect(len(stagingStatuses)).To(BeNumerically(">=", 1))
 
 			// Should NOT have status entries for qa (unrelated)
-			qaStatuses := []kuberikv1alpha1.DeploymentStatusEntry{}
+			qaStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
 			for _, status := range updatedDeployment.Status.DeploymentStatuses {
 				if status.Environment == "qa" {
 					qaStatuses = append(qaStatuses, status)

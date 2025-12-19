@@ -34,9 +34,9 @@ const (
 	RelationshipTypeParallel RelationshipType = "Parallel"
 )
 
-// DeploymentRelationship defines a relationship to another environment
-type DeploymentRelationship struct {
-	// Environment is the environment name this deployment relates to
+// EnvironmentRelationship defines a relationship to another environment
+type EnvironmentRelationship struct {
+	// Environment is the environment name this environment relates to
 	// +required
 	Environment string `json:"environment"`
 
@@ -48,7 +48,7 @@ type DeploymentRelationship struct {
 
 // BackendConfig contains backend-specific configuration
 type BackendConfig struct {
-	// Type specifies the deployment backend to use (e.g., "github")
+	// Type specifies the backend to use (e.g., "github")
 	// +required
 	// +kubebuilder:validation:Enum=github
 	Type string `json:"type"`
@@ -62,39 +62,39 @@ type BackendConfig struct {
 	Secret string `json:"secret,omitempty"`
 }
 
-// DeploymentSpec defines the desired state of Deployment
-type DeploymentSpec struct {
+// EnvironmentSpec defines the desired state of Environment
+type EnvironmentSpec struct {
 
-	// RolloutRef is a reference to the Rollout that this Deployment manages
+	// RolloutRef is a reference to the Rollout that this Environment manages
 	// +required
 	RolloutRef corev1.LocalObjectReference `json:"rolloutRef"`
 
-	// Name is the name of the deployment
+	// Name is the name of the GitHub deployment (must start with "kuberik" prefix for GitHub backend)
 	// +required
 	Name string `json:"name"`
 
-	// Environment is the deployment environment (e.g., "production", "staging")
+	// Environment is the environment name (e.g., "production", "staging")
 	// +optional
 	Environment string `json:"environment,omitempty"`
 
-	// Relationship defines how this deployment relates to another environment
+	// Relationship defines how this environment relates to another environment
 	// +optional
-	Relationship *DeploymentRelationship `json:"relationship,omitempty"`
+	Relationship *EnvironmentRelationship `json:"relationship,omitempty"`
 
 	// Backend contains backend-specific configuration
 	// +required
 	Backend BackendConfig `json:"backend"`
 
-	// RequeueInterval specifies how often the controller should reconcile this Deployment
+	// RequeueInterval specifies how often the controller should reconcile this Environment
 	// If not specified, defaults to 1 minute. Must be a valid duration string (e.g., "1m", "30s", "5m").
 	// +optional
 	// +kubebuilder:validation:Pattern=^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
 	RequeueInterval string `json:"requeueInterval,omitempty"`
 }
 
-// DeploymentStatusEntry represents a deployment status for a specific version in an environment.
-type DeploymentStatusEntry struct {
-	// Environment is the deployment environment (e.g., "production", "staging")
+// EnvironmentStatusEntry represents a deployment status for a specific version in an environment.
+type EnvironmentStatusEntry struct {
+	// Environment is the environment name (e.g., "production", "staging")
 	// +required
 	Environment string `json:"environment"`
 
@@ -127,11 +127,11 @@ type EnvironmentInfo struct {
 
 	// Relationship defines how this environment relates to another environment
 	// +optional
-	Relationship *DeploymentRelationship `json:"relationship,omitempty"`
+	Relationship *EnvironmentRelationship `json:"relationship,omitempty"`
 }
 
-// DeploymentStatus defines the observed state of Deployment.
-type DeploymentStatus struct {
+// EnvironmentStatus defines the observed state of Environment.
+type EnvironmentStatus struct {
 	// DeploymentID is the ID of the deployment (backend-specific)
 	// +optional
 	DeploymentID *int64 `json:"deploymentId,omitempty"`
@@ -156,7 +156,7 @@ type DeploymentStatus struct {
 	// Only versions that are relevant based on environment relationships are tracked.
 	// +listType=atomic
 	// +optional
-	DeploymentStatuses []DeploymentStatusEntry `json:"deploymentStatuses,omitempty"`
+	DeploymentStatuses []EnvironmentStatusEntry `json:"deploymentStatuses,omitempty"`
 
 	// EnvironmentInfos tracks deployment information for each environment.
 	// Each environment has environment URL and relationships (not per version).
@@ -164,7 +164,7 @@ type DeploymentStatus struct {
 	// +optional
 	EnvironmentInfos []EnvironmentInfo `json:"environmentInfos,omitempty"`
 
-	// conditions represent the current state of the Deployment resource.
+	// conditions represent the current state of the Environment resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
 	// Standard condition types include:
@@ -182,32 +182,32 @@ type DeploymentStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Deployment is the Schema for the deployments API
-type Deployment struct {
+// Environment is the Schema for the environments API
+type Environment struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
-	// spec defines the desired state of Deployment
+	// spec defines the desired state of Environment
 	// +required
-	Spec DeploymentSpec `json:"spec"`
+	Spec EnvironmentSpec `json:"spec"`
 
-	// status defines the observed state of Deployment
+	// status defines the observed state of Environment
 	// +optional
-	Status DeploymentStatus `json:"status,omitempty,omitzero"`
+	Status EnvironmentStatus `json:"status,omitempty,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// DeploymentList contains a list of Deployment
-type DeploymentList struct {
+// EnvironmentList contains a list of Environment
+type EnvironmentList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Deployment `json:"items"`
+	Items           []Environment `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Deployment{}, &DeploymentList{})
+	SchemeBuilder.Register(&Environment{}, &EnvironmentList{})
 }
