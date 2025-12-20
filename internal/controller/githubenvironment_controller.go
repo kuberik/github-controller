@@ -135,9 +135,22 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	// Check relationships and update allowed versions on RolloutGate
-	if err := r.updateAllowedVersionsFromRelationships(ctx, deployment, githubClient); err != nil {
+	// Build relationship graph
+	graphData, err := r.buildRelationshipGraph(ctx, deployment, githubClient)
+	if err != nil {
+		log.Error(err, "Failed to build relationship graph")
+		return ctrl.Result{}, err
+	}
+
+	// Update allowed versions on RolloutGate based on relationships
+	if err := r.updateAllowedVersionsFromRelationships(ctx, deployment, graphData); err != nil {
 		log.Error(err, "Failed to update allowed versions from relationships")
+		return ctrl.Result{}, err
+	}
+
+	// Update deployment statuses for related environments
+	if err := r.updateDeploymentStatusesForRelatedEnvironments(ctx, deployment, graphData); err != nil {
+		log.Error(err, "Failed to update deployment statuses for related environments")
 		return ctrl.Result{}, err
 	}
 
@@ -343,21 +356,24 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 		}
 	}
 
-	// Remove all entries for current environment that are no longer in history
-	statuses := environment.Status.DeploymentStatuses
-	statuses = removeDeploymentStatusEntries(statuses, func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
+	// Sync deployment statuses for current environment
+	statusMap := newDeploymentStatusMap(environment.Status.DeploymentStatuses)
+
+	// Remove entries for current environment that are no longer in history
+	statusMap.remove(func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
 		return entry.Environment == currentEnv && !versionsInHistory[entry.Version]
 	})
 
 	// Update or add statuses for versions in history
 	for version, depInfo := range currentEnvDeployments {
 		if versionsInHistory[version] {
-			statuses = updateDeploymentStatusEntryWithInfo(statuses, currentEnv, version, depInfo.Status, depInfo.DeploymentID, depInfo.DeploymentURL)
+			statusMap.set(currentEnv, version, depInfo.Status, depInfo.DeploymentID, depInfo.DeploymentURL)
 		}
 	}
 
 	// Check if update is needed
-	if !deploymentStatusesEqual(environment.Status.DeploymentStatuses, statuses) {
+	statuses := statusMap.toSlice()
+	if !statusMap.equal(environment.Status.DeploymentStatuses) {
 		environment.Status.DeploymentStatuses = statuses
 		needsUpdate = true
 	}
@@ -918,28 +934,23 @@ func (r *GitHubEnvironmentReconciler) createOrUpdateRolloutGate(ctx context.Cont
 	return nil
 }
 
-// updateAllowedVersionsFromRelationships checks environment relationships and updates allowed versions on RolloutGate
-// It also tracks deployment statuses and environment info for all related environments
-// Version relevance is determined by relationships: we track versions that are relevant to the current environment
-// based on "After" and "Parallel" relationships
-func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx context.Context, environment *kuberikv1alpha1.Environment, client *github.Client) error {
-	// Get the referenced Rollout to access releaseCandidates
-	rollout, err := r.getReferencedRollout(ctx, environment)
-	if err != nil {
-		return fmt.Errorf("failed to get referenced Rollout: %w", err)
+// relationshipGraphData holds the data needed for relationship-based operations
+type relationshipGraphData struct {
+	relevantEnvironments map[string]bool
+	relevantVersions     map[string]bool
+	envDeployments       map[string][]*github.Deployment
+	allEnvDeployments    map[string]map[string]versionDeploymentInfo
+	environmentInfos     map[string]struct {
+		EnvironmentURL string
+		Relationship   *kuberikv1alpha1.EnvironmentRelationship
 	}
+}
 
-	// Build a map of revision -> tag from releaseCandidates
-	revisionToTag := make(map[string]string)
-	for _, candidate := range rollout.Status.ReleaseCandidates {
-		if candidate.Revision != nil && *candidate.Revision != "" && candidate.Tag != "" {
-			revisionToTag[*candidate.Revision] = candidate.Tag
-		}
-	}
-
+// buildRelationshipGraph discovers all environments and builds the relationship graph
+func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context, environment *kuberikv1alpha1.Environment, client *github.Client) (*relationshipGraphData, error) {
 	owner, repo, err := parseProject(environment.Spec.Backend.Project)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Ensure deployment name has kuberik prefix for GitHub
@@ -952,7 +963,6 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 	relevantEnvironments[currentEnv] = true
 
 	// Build a map of environment -> relationships from all discovered environments
-	// We'll populate this as we discover environments
 	envRelationships := make(map[string]*kuberikv1alpha1.EnvironmentRelationship)
 
 	// Query all deployments with the same task to discover all environments
@@ -961,12 +971,11 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 		Task: task,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list all deployments: %w", err)
+		return nil, fmt.Errorf("failed to list all deployments: %w", err)
 	}
 
 	// Group deployments by environment and extract environment names
 	envDeployments := make(map[string][]*github.Deployment) // environment -> deployments
-	environments := make(map[string]bool)
 	for _, d := range allDeployments {
 		if d.Environment == nil {
 			continue
@@ -977,7 +986,6 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 		envParts := strings.Split(env, "/")
 		if len(envParts) > 0 {
 			envName := envParts[len(envParts)-1]
-			environments[envName] = true
 			envDeployments[envName] = append(envDeployments[envName], d)
 
 			// Extract relationship from payload
@@ -1025,11 +1033,6 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 			}
 		}
 	}
-
-	// Initialize as empty slice (not nil) when relationship is set
-	// This ensures allowedVersions is set to empty array instead of nil
-	allowedTags := []string{}
-	seenTags := make(map[string]bool) // Avoid duplicates
 
 	// Track deployment statuses for all environments
 	allEnvDeployments := make(map[string]map[string]versionDeploymentInfo) // environment -> version -> deployment info
@@ -1107,24 +1110,55 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 				DeploymentID: d.ID,
 				// DeploymentURL is only set for current environment in updateDeploymentStatus
 			}
+		}
+	}
 
-			// Check if any status is success for allowed versions (only for related environments)
-			if environment.Spec.Relationship != nil {
-				relatedEnv := environment.Spec.Relationship.Environment
-				if envName == relatedEnv {
-					// For "After" relationship: version must be successfully deployed in related environment
-					// For "Parallel" relationship: version must be successfully deployed in related environment
-					for _, status := range statuses {
-						if status.State != nil && *status.State == "success" {
-							// Match revision to tag in releaseCandidates
-							if tag, found := revisionToTag[version]; found {
-								// Only add if not already seen
-								if !seenTags[tag] {
-									allowedTags = append(allowedTags, tag)
-									seenTags[tag] = true
-								}
-							}
-							break
+	return &relationshipGraphData{
+		relevantEnvironments: relevantEnvironments,
+		relevantVersions:     relevantVersions,
+		envDeployments:       envDeployments,
+		allEnvDeployments:    allEnvDeployments,
+		environmentInfos:     environmentInfos,
+	}, nil
+}
+
+// updateAllowedVersionsFromRelationships checks environment relationships and updates allowed versions on RolloutGate
+// Version relevance is determined by relationships: we track versions that are relevant to the current environment
+// based on "After" and "Parallel" relationships
+func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx context.Context, environment *kuberikv1alpha1.Environment, graphData *relationshipGraphData) error {
+	// Get the referenced Rollout to access releaseCandidates
+	rollout, err := r.getReferencedRollout(ctx, environment)
+	if err != nil {
+		return fmt.Errorf("failed to get referenced Rollout: %w", err)
+	}
+
+	// Build a map of revision -> tag from releaseCandidates
+	revisionToTag := make(map[string]string)
+	for _, candidate := range rollout.Status.ReleaseCandidates {
+		if candidate.Revision != nil && *candidate.Revision != "" && candidate.Tag != "" {
+			revisionToTag[*candidate.Revision] = candidate.Tag
+		}
+	}
+
+	// Initialize as empty slice (not nil) when relationship is set
+	// This ensures allowedVersions is set to empty array instead of nil
+	allowedTags := []string{}
+	seenTags := make(map[string]bool) // Avoid duplicates
+
+	// Find allowed versions from related environment deployments
+	if environment.Spec.Relationship != nil {
+		relatedEnv := environment.Spec.Relationship.Environment
+		// Check if related environment has deployments
+		if relatedEnvDeployments, exists := graphData.allEnvDeployments[relatedEnv]; exists {
+			for version, depInfo := range relatedEnvDeployments {
+				// Check if deployment status is success
+				if depInfo.Status == "success" {
+					// Match revision to tag in releaseCandidates
+					if tag, found := revisionToTag[version]; found {
+						// Only add if not already seen
+						if !seenTags[tag] {
+							allowedTags = append(allowedTags, tag)
+							seenTags[tag] = true
 						}
 					}
 				}
@@ -1134,7 +1168,8 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 
 	// Update allowed versions on RolloutGate (only if relationship is set)
 	if environment.Spec.Relationship == nil {
-		// No relationship, skip RolloutGate update but still update environment statuses
+		// No relationship, skip RolloutGate update
+		return nil
 	} else if environment.Status.RolloutGateRef == nil {
 		return nil
 	} else {
@@ -1169,6 +1204,13 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 		}
 	}
 
+	return nil
+}
+
+// updateDeploymentStatusesForRelatedEnvironments updates deployment statuses for all related environments
+func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironments(ctx context.Context, environment *kuberikv1alpha1.Environment, graphData *relationshipGraphData) error {
+	currentEnv := environment.Spec.Environment
+
 	// Update deployment statuses for all environments in Environment status
 	if environment.Status.DeploymentStatuses == nil {
 		environment.Status.DeploymentStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
@@ -1176,42 +1218,42 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 
 	needsStatusUpdate := false
 
-	// Start with current statuses
-	statuses := environment.Status.DeploymentStatuses
+	// Sync deployment statuses for all environments
+	statusMap := newDeploymentStatusMap(environment.Status.DeploymentStatuses)
 
 	// Update statuses for each environment (excluding current environment, which is handled separately)
-	for envName, envDeployments := range allEnvDeployments {
+	// Process all environments in allEnvDeployments - they already contain only relevant versions
+	for envName, envDeployments := range graphData.allEnvDeployments {
 		// Skip current environment (handled separately in updateDeploymentStatus)
 		if envName == currentEnv {
 			continue
 		}
 
 		// Only track statuses for relevant environments
-		if !relevantEnvironments[envName] {
+		if !graphData.relevantEnvironments[envName] {
 			continue
 		}
 
-		// Update or add statuses for versions that are relevant
+		// Add/update statuses for all versions in this environment
+		// Note: allEnvDeployments already only contains relevant versions
 		for version, depInfo := range envDeployments {
-			if relevantVersions[version] {
-				// Don't include URL in status entries for non-current environments
-				statuses = updateDeploymentStatusEntryWithInfo(statuses, envName, version, depInfo.Status, depInfo.DeploymentID, "")
-			}
+			// Don't include URL in status entries for non-current environments
+			statusMap.set(envName, version, depInfo.Status, depInfo.DeploymentID, "")
 		}
 	}
 
 	// Clean up: remove entries for environments that are no longer relevant or versions that are no longer relevant
-	statuses = removeDeploymentStatusEntries(statuses, func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
+	statusMap.remove(func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
 		// Keep current environment entries (handled separately in updateDeploymentStatus)
 		if entry.Environment == currentEnv {
 			return false
 		}
 		// Remove if environment is no longer relevant
-		if !relevantEnvironments[entry.Environment] {
+		if !graphData.relevantEnvironments[entry.Environment] {
 			return true
 		}
 		// Remove if version is no longer relevant
-		return !relevantVersions[entry.Version]
+		return !graphData.relevantVersions[entry.Version]
 	})
 
 	// Update environment infos (URLs and relationships for all environments)
@@ -1220,13 +1262,13 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 	}
 
 	environmentInfoList := environment.Status.EnvironmentInfos
-	for envName, info := range environmentInfos {
+	for envName, info := range graphData.environmentInfos {
 		environmentInfoList = updateEnvironmentInfoWithRelationship(environmentInfoList, envName, info.EnvironmentURL, info.Relationship)
 	}
 
 	// Clean up environment infos for environments that are no longer relevant
 	environmentInfoList = removeEnvironmentInfos(environmentInfoList, func(entry kuberikv1alpha1.EnvironmentInfo) bool {
-		return !relevantEnvironments[entry.Environment]
+		return !graphData.relevantEnvironments[entry.Environment]
 	})
 
 	// Check if environment infos need update
@@ -1236,7 +1278,10 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 	}
 
 	// Check if statuses need update
-	if !deploymentStatusesEqual(environment.Status.DeploymentStatuses, statuses) {
+	statuses := statusMap.toSlice()
+	// Always update if the content is different
+	// Compare lengths first as a fast path, then do detailed comparison
+	if len(statuses) != len(environment.Status.DeploymentStatuses) || !statusMap.equal(environment.Status.DeploymentStatuses) {
 		environment.Status.DeploymentStatuses = statuses
 		needsStatusUpdate = true
 	}
@@ -1263,59 +1308,68 @@ func (r *GitHubEnvironmentReconciler) slicesEqual(a, b []string) bool {
 	return true
 }
 
-// updateDeploymentStatusEntryWithInfo updates or adds a deployment status entry with full deployment info
-func updateDeploymentStatusEntryWithInfo(statuses []kuberikv1alpha1.EnvironmentStatusEntry, environment, version, status string, deploymentID *int64, deploymentURL string) []kuberikv1alpha1.EnvironmentStatusEntry {
-	// Find existing entry
-	for i := range statuses {
-		if statuses[i].Environment == environment && statuses[i].Version == version {
-			statuses[i].Status = status
-			statuses[i].DeploymentID = deploymentID
-			statuses[i].DeploymentURL = deploymentURL
-			return statuses
-		}
+// deploymentStatusMap is a helper type for managing deployment statuses using a map for efficient lookups
+type deploymentStatusMap struct {
+	entries map[string]kuberikv1alpha1.EnvironmentStatusEntry // key: "environment:version"
+}
+
+// newDeploymentStatusMap creates a new deployment status map from a slice
+func newDeploymentStatusMap(statuses []kuberikv1alpha1.EnvironmentStatusEntry) *deploymentStatusMap {
+	m := &deploymentStatusMap{
+		entries: make(map[string]kuberikv1alpha1.EnvironmentStatusEntry),
 	}
-	// Add new entry
-	return append(statuses, kuberikv1alpha1.EnvironmentStatusEntry{
+	for _, entry := range statuses {
+		key := entry.Environment + ":" + entry.Version
+		m.entries[key] = entry
+	}
+	return m
+}
+
+// set updates or adds a deployment status entry
+func (m *deploymentStatusMap) set(environment, version, status string, deploymentID *int64, deploymentURL string) {
+	key := environment + ":" + version
+	m.entries[key] = kuberikv1alpha1.EnvironmentStatusEntry{
 		Environment:   environment,
 		Version:       version,
 		Status:        status,
 		DeploymentID:  deploymentID,
 		DeploymentURL: deploymentURL,
-	})
+	}
 }
 
-// removeDeploymentStatusEntries removes all entries matching the given filter function
-func removeDeploymentStatusEntries(statuses []kuberikv1alpha1.EnvironmentStatusEntry, shouldRemove func(kuberikv1alpha1.EnvironmentStatusEntry) bool) []kuberikv1alpha1.EnvironmentStatusEntry {
-	result := make([]kuberikv1alpha1.EnvironmentStatusEntry, 0, len(statuses))
-	for _, entry := range statuses {
-		if !shouldRemove(entry) {
-			result = append(result, entry)
+// remove removes entries matching the filter function
+func (m *deploymentStatusMap) remove(shouldRemove func(kuberikv1alpha1.EnvironmentStatusEntry) bool) {
+	for key, entry := range m.entries {
+		if shouldRemove(entry) {
+			delete(m.entries, key)
 		}
+	}
+}
+
+// toSlice converts the map to a slice
+func (m *deploymentStatusMap) toSlice() []kuberikv1alpha1.EnvironmentStatusEntry {
+	result := make([]kuberikv1alpha1.EnvironmentStatusEntry, 0, len(m.entries))
+	for _, entry := range m.entries {
+		result = append(result, entry)
 	}
 	return result
 }
 
-// deploymentStatusesEqual compares two deployment status lists for equality
-func deploymentStatusesEqual(a, b []kuberikv1alpha1.EnvironmentStatusEntry) bool {
-	if len(a) != len(b) {
+// equal compares this map with a slice for equality (only compares status, matching original behavior)
+func (m *deploymentStatusMap) equal(other []kuberikv1alpha1.EnvironmentStatusEntry) bool {
+	if len(m.entries) != len(other) {
 		return false
 	}
-	// Create maps for easier comparison
-	aMap := make(map[string]string) // "env:version" -> status
-	bMap := make(map[string]string)
-	for _, entry := range a {
+	otherMap := make(map[string]string) // "env:version" -> status
+	for _, entry := range other {
 		key := entry.Environment + ":" + entry.Version
-		aMap[key] = entry.Status
+		otherMap[key] = entry.Status
 	}
-	for _, entry := range b {
-		key := entry.Environment + ":" + entry.Version
-		bMap[key] = entry.Status
-	}
-	if len(aMap) != len(bMap) {
+	if len(m.entries) != len(otherMap) {
 		return false
 	}
-	for k, v := range aMap {
-		if bMap[k] != v {
+	for key, entry := range m.entries {
+		if otherStatus, exists := otherMap[key]; !exists || otherStatus != entry.Status {
 			return false
 		}
 	}
@@ -1402,4 +1456,42 @@ func environmentInfosEqual(a, b []kuberikv1alpha1.EnvironmentInfo) bool {
 		}
 	}
 	return true
+}
+
+// getEnvDeploymentKeys returns the keys from allEnvDeployments map for debugging
+func getEnvDeploymentKeys(allEnvDeployments map[string]map[string]versionDeploymentInfo) []string {
+	keys := make([]string, 0, len(allEnvDeployments))
+	for k := range allEnvDeployments {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getVersionKeys returns the keys from a version deployment info map for debugging
+func getVersionKeys(deps map[string]versionDeploymentInfo) []string {
+	keys := make([]string, 0, len(deps))
+	for k := range deps {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getEnvDeploymentKeysFromRaw returns keys from the raw envDeployments map
+func getEnvDeploymentKeysFromRaw(envDeployments map[string][]*github.Deployment) []string {
+	keys := make([]string, 0, len(envDeployments))
+	for k := range envDeployments {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getRelevantEnvKeys returns keys from relevantEnvironments map
+func getRelevantEnvKeys(relevantEnvironments map[string]bool) []string {
+	keys := make([]string, 0, len(relevantEnvironments))
+	for k, v := range relevantEnvironments {
+		if v {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }

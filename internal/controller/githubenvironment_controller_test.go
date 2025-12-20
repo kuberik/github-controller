@@ -476,14 +476,14 @@ var _ = Describe("Environment Controller", func() {
 							Type:    "github",
 							Project: "kuberik/environment-controller-testing",
 						},
-						Name:        "kuberik-test-deployment",
+						Name:        "test-deployment",
 						Environment: "production",
 					},
 				}
 
 				Expect(deployment.Spec.RolloutRef.Name).To(Equal("test-rollout"))
 				Expect(deployment.Spec.Backend.Project).To(Equal("kuberik/environment-controller-testing"))
-				Expect(deployment.Spec.Name).To(Equal("kuberik-test-deployment"))
+				Expect(deployment.Spec.Name).To(Equal("test-deployment"))
 				Expect(deployment.Spec.Environment).To(Equal("production"))
 			})
 		})
@@ -552,7 +552,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment",
+					Name:        "test-deployment",
 					Environment: "production",
 				},
 			}
@@ -613,7 +613,7 @@ var _ = Describe("Environment Controller", func() {
 			Expect(ghDeployment.Ref).ToNot(BeNil())
 			Expect(*ghDeployment.Ref).To(Equal(revision))
 			Expect(ghDeployment.Environment).ToNot(BeNil())
-			Expect(*ghDeployment.Environment).To(Equal("kuberik-test-deployment/production"))
+			Expect(*ghDeployment.Environment).To(Equal("kuberik/test-deployment/production"))
 
 			By("Verifying GitHub deployment status was created")
 			// Get deployment statuses
@@ -691,7 +691,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status",
+					Name:        "test-deployment-status",
 					Environment: "production",
 				},
 			}
@@ -801,7 +801,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-update",
+					Name:        "test-deployment-update",
 					Environment: "production",
 				},
 			}
@@ -879,7 +879,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-missing-rollout",
+					Name:        "test-deployment-missing-rollout",
 					Environment: "production",
 				},
 			}
@@ -949,7 +949,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-no-revision",
+					Name:        "test-deployment-no-revision",
 					Environment: "production",
 				},
 			}
@@ -1010,7 +1010,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-empty-history",
+					Name:        "test-deployment-empty-history",
 					Environment: "production",
 				},
 			}
@@ -1096,7 +1096,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status",
+					Name:        "test-deployment-status",
 					Environment: "production",
 				},
 			}
@@ -1143,11 +1143,11 @@ var _ = Describe("Environment Controller", func() {
 			// First create a related deployment (staging)
 			// Use a commit SHA as the revision (GitHub deployment ref)
 			// Relationships are for the same deployment name but different environment
-			// So we create "kuberik-test-deployment-deps/staging" environment
+			// So we create "test-deployment-deps/staging" environment
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			stagingTag := "v1.0.0" // Tag that matches the staging revision
-			stagingEnv := "kuberik-test-deployment-deps/staging"
-			stagingTask := "deploy:kuberik-test-deployment-deps"
+			stagingEnv := "kuberik/test-deployment-deps/staging"
+			stagingTask := "deploy:kuberik/test-deployment-deps"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
@@ -1219,7 +1219,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-deps",
+					Name:        "test-deployment-deps",
 					Environment: "production",
 					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
@@ -1322,7 +1322,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status-tracking",
+					Name:        "test-deployment-status-tracking",
 					Environment: "production",
 				},
 			}
@@ -1388,8 +1388,8 @@ var _ = Describe("Environment Controller", func() {
 			By("Creating related environment deployments")
 			// Create staging environment with version
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
-			stagingEnv := "kuberik-test-deployment-relevant/staging"
-			stagingTask := "deploy:kuberik-test-deployment-relevant"
+			stagingEnv := "kuberik/test-deployment-relevant/staging"
+			stagingTask := "deploy:kuberik/test-deployment-relevant"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
@@ -1454,7 +1454,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-relevant",
+					Name:        "test-deployment-relevant",
 					Environment: "production",
 					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
@@ -1558,7 +1558,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status-update",
+					Name:        "test-deployment-status-update",
 					Environment: "production",
 				},
 			}
@@ -1713,7 +1713,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status-remove",
+					Name:        "test-deployment-status-remove",
 					Environment: "production",
 				},
 			}
@@ -1802,8 +1802,8 @@ var _ = Describe("Environment Controller", func() {
 
 			By("Creating staging deployment")
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
-			stagingEnv := "kuberik-test-deployment-status-env/staging"
-			stagingTask := "deploy:kuberik-test-deployment-status-env"
+			stagingEnv := "kuberik/test-deployment-status-env/staging"
+			stagingTask := "deploy:kuberik/test-deployment-status-env"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
@@ -1868,7 +1868,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/deployment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-status-env",
+					Name:        "test-deployment-status-env",
 					Environment: "production",
 					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
@@ -1948,8 +1948,8 @@ var _ = Describe("Environment Controller", func() {
 			qaRef := "5220a27a5410a6a5182b9fadf537c6437fcca0b7"
 
 			// Create staging deployment
-			stagingEnv := "kuberik-test-deployment-relevant-graph/staging"
-			stagingTask := "deploy:kuberik-test-deployment-relevant-graph"
+			stagingEnv := "kuberik/test-deployment-relevant-graph/staging"
+			stagingTask := "deploy:kuberik/test-deployment-relevant-graph"
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
@@ -1969,8 +1969,8 @@ var _ = Describe("Environment Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Create qa deployment (unrelated)
-			qaEnv := "kuberik-test-deployment-relevant-graph/qa"
-			qaTask := "deploy:kuberik-test-deployment-relevant-graph"
+			qaEnv := "kuberik/test-deployment-relevant-graph/qa"
+			qaTask := "deploy:kuberik/test-deployment-relevant-graph"
 			qaDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(qaRef),
 				Environment:           github.String(qaEnv),
@@ -2029,7 +2029,7 @@ var _ = Describe("Environment Controller", func() {
 						Type:    "github",
 						Project: "kuberik/environment-controller-testing",
 					},
-					Name:        "kuberik-test-deployment-relevant-graph",
+					Name:        "test-deployment-relevant-graph",
 					Environment: "production",
 					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
 						Environment: "staging",
