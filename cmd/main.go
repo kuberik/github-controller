@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	v1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/prow/pkg/ghcache"
 
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
@@ -55,6 +56,7 @@ func init() {
 	utilruntime.Must(kuberikv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 	utilruntime.Must(kuberikrolloutv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(v1.Install(scheme))
 }
 
 // nolint:gocyclo

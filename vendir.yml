@@ -10,3 +10,10 @@ directories:
         includePaths:
           - config/crd/bases/*
         newRootPath: config/crd/bases
+      - path: gateway-api
+        git:
+          url: https://github.com/kubernetes-sigs/gateway-api
+          ref: v1.4.1
+        includePaths:
+          - config/crd/standard/*
+        newRootPath: config/crd/standard

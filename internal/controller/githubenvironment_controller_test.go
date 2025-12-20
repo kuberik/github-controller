@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
@@ -194,6 +195,22 @@ var _ = Describe("Environment Controller", func() {
 					},
 				}
 				k8sClient.Delete(context.Background(), ingress)
+
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+				}
+				k8sClient.Delete(context.Background(), httpRoute)
+
+				gateway := &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-gateway",
+						Namespace: ControllerNamespace,
+					},
+				}
+				k8sClient.Delete(context.Background(), gateway)
 			})
 
 			It("Should return empty string when service doesn't exist", func() {
@@ -377,6 +394,379 @@ var _ = Describe("Environment Controller", func() {
 				os.Unsetenv("POD_NAMESPACE")
 				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
 				Expect(url).To(BeEmpty())
+			})
+
+			It("Should return URL from HTTPRoute when ingress doesn't exist", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create Gateway
+				gateway := &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-gateway",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "envoy",
+						Listeners: []gatewayv1.Listener{
+							{
+								Name:     "http",
+								Protocol: gatewayv1.HTTPProtocolType,
+								Port:     gatewayv1.PortNumber(80),
+								Hostname: func() *gatewayv1.Hostname { h := gatewayv1.Hostname("dashboard.example.com"); return &h }(),
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), gateway)).To(Succeed())
+
+				// Create HTTPRoute pointing to rollout-dashboard
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: gatewayv1.ObjectName("rollout-dashboard-gateway"),
+								},
+							},
+						},
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: gatewayv1.ObjectName("rollout-dashboard"),
+												Port: func() *gatewayv1.PortNumber { p := gatewayv1.PortNumber(80); return &p }(),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), httpRoute)).To(Succeed())
+
+				expectedURL := fmt.Sprintf("http://dashboard.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
+			})
+
+			It("Should return URL with HTTPS from HTTPRoute when Gateway uses HTTPS", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create Gateway with HTTPS
+				gateway := &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-gateway",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "envoy",
+						Listeners: []gatewayv1.Listener{
+							{
+								Name:     "https",
+								Protocol: gatewayv1.HTTPSProtocolType,
+								Port:     gatewayv1.PortNumber(443),
+								Hostname: func() *gatewayv1.Hostname { h := gatewayv1.Hostname("dashboard.example.com"); return &h }(),
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), gateway)).To(Succeed())
+
+				// Create HTTPRoute pointing to rollout-dashboard
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: gatewayv1.ObjectName("rollout-dashboard-gateway"),
+								},
+							},
+						},
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: gatewayv1.ObjectName("rollout-dashboard"),
+												Port: func() *gatewayv1.PortNumber { p := gatewayv1.PortNumber(80); return &p }(),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), httpRoute)).To(Succeed())
+
+				expectedURL := fmt.Sprintf("https://dashboard.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
+			})
+
+			It("Should return empty string when HTTPRoute exists but Gateway doesn't exist", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create HTTPRoute with non-existent Gateway reference
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: gatewayv1.ObjectName("non-existent-gateway"),
+								},
+							},
+						},
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: gatewayv1.ObjectName("rollout-dashboard"),
+												Port: func() *gatewayv1.PortNumber { p := gatewayv1.PortNumber(80); return &p }(),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), httpRoute)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(BeEmpty())
+			})
+
+			It("Should return empty string when HTTPRoute exists but Gateway has no hostname", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create Gateway without hostname
+				gateway := &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-gateway",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "envoy",
+						Listeners: []gatewayv1.Listener{
+							{
+								Name:     "http",
+								Protocol: gatewayv1.HTTPProtocolType,
+								Port:     gatewayv1.PortNumber(80),
+								// No hostname specified
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), gateway)).To(Succeed())
+
+				// Create HTTPRoute pointing to rollout-dashboard
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: gatewayv1.ObjectName("rollout-dashboard-gateway"),
+								},
+							},
+						},
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: gatewayv1.ObjectName("rollout-dashboard"),
+												Port: func() *gatewayv1.PortNumber { p := gatewayv1.PortNumber(80); return &p }(),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), httpRoute)).To(Succeed())
+
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(BeEmpty())
+			})
+
+			It("Should prefer Ingress over HTTPRoute when both exist", func() {
+				// Create service
+				svc := &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard",
+						Namespace: ControllerNamespace,
+					},
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
+							{Port: 80},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), svc)).To(Succeed())
+
+				// Create ingress pointing to rollout-dashboard
+				ingress := &networkingv1.Ingress{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-ingress",
+						Namespace: ControllerNamespace,
+					},
+					Spec: networkingv1.IngressSpec{
+						Rules: []networkingv1.IngressRule{
+							{
+								Host: "ingress.example.com",
+								IngressRuleValue: networkingv1.IngressRuleValue{
+									HTTP: &networkingv1.HTTPIngressRuleValue{
+										Paths: []networkingv1.HTTPIngressPath{
+											{
+												Path:     "/",
+												PathType: func() *networkingv1.PathType { pt := networkingv1.PathTypePrefix; return &pt }(),
+												Backend: networkingv1.IngressBackend{
+													Service: &networkingv1.IngressServiceBackend{
+														Name: "rollout-dashboard",
+														Port: networkingv1.ServiceBackendPort{
+															Number: 80,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), ingress)).To(Succeed())
+
+				// Create Gateway
+				gateway := &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-gateway",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "envoy",
+						Listeners: []gatewayv1.Listener{
+							{
+								Name:     "http",
+								Protocol: gatewayv1.HTTPProtocolType,
+								Port:     gatewayv1.PortNumber(80),
+								Hostname: func() *gatewayv1.Hostname { h := gatewayv1.Hostname("gateway.example.com"); return &h }(),
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), gateway)).To(Succeed())
+
+				// Create HTTPRoute pointing to rollout-dashboard
+				httpRoute := &gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rollout-dashboard-route",
+						Namespace: ControllerNamespace,
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: gatewayv1.ObjectName("rollout-dashboard-gateway"),
+								},
+							},
+						},
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: gatewayv1.ObjectName("rollout-dashboard"),
+												Port: func() *gatewayv1.PortNumber { p := gatewayv1.PortNumber(80); return &p }(),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(context.Background(), httpRoute)).To(Succeed())
+
+				// Should prefer Ingress over HTTPRoute
+				expectedURL := fmt.Sprintf("http://ingress.example.com/rollouts/%s/%s", TestNamespace, TestName)
+				url := reconciler.getRolloutDashboardURL(context.Background(), TestNamespace, TestName)
+				Expect(url).To(Equal(expectedURL))
 			})
 		})
 

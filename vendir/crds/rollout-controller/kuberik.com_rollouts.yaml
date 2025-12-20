@@ -182,14 +182,6 @@ spec:
                     type: object
                     x-kubernetes-map-type: atomic
                 type: object
-              maxBakeTime:
-                description: 'DEPRECATED: Use BakeTime instead.'
-                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
-                type: string
-              minBakeTime:
-                description: 'DEPRECATED: Use BakeTime instead.'
-                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
-                type: string
               releasesImagePolicy:
                 description: ReleasesImagePolicy specifies the ImagePolicy that provides
                   available releases
@@ -320,6 +312,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              description:
+                description: |-
+                  Description is the description of the image extracted from OCI annotations.
+                  This field is set once for the entire rollout based on the latest available release.
+                type: string
               gatedReleaseCandidates:
                 description: |-
                   GatedReleaseCandidates is a list of release candidates that have passed through all gates.
@@ -414,6 +411,30 @@ spec:
                         BakeStatusMessage provides details about the bake state for this deployment
                         This field contains human-readable information about why the bake status is what it is.
                       type: string
+                    failedHealthChecks:
+                      description: |-
+                        FailedHealthChecks contains all health checks that failed during bake.
+                        This field is populated when bake fails due to health check errors.
+                      items:
+                        description: FailedHealthCheck represents a health check that
+                          failed during bake.
+                        properties:
+                          message:
+                            description: Message is the error message from the health
+                              check.
+                            type: string
+                          name:
+                            description: Name is the name of the health check.
+                            type: string
+                          namespace:
+                            description: Namespace is the namespace of the health
+                              check.
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      type: array
                     id:
                       description: ID is a unique auto-incrementing identifier for
                         this history entry.
@@ -498,6 +519,11 @@ spec:
                 description: |-
                   Source is the source information extracted from OCI annotations.
                   This typically contains the repository URL or source code location.
+                  This field is set once for the entire rollout based on the latest available release.
+                type: string
+              title:
+                description: |-
+                  Title is the title of the image extracted from OCI annotations.
                   This field is set once for the entire rollout based on the latest available release.
                 type: string
             type: object

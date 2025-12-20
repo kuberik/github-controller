@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
@@ -74,6 +75,8 @@ type GitHubEnvironmentReconciler struct {
 // +kubebuilder:rbac:groups=kuberik.com,resources=rolloutgates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kuberik.com,resources=rollouts,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
@@ -509,8 +512,87 @@ func (r *GitHubEnvironmentReconciler) getRolloutDashboardURL(ctx context.Context
 	}
 
 	if baseURL == "" {
-		// TODO: Add Gateway API support if needed
-		// For now, only Ingress is supported
+		// Check Gateway API (HTTPRoute) if Ingress not found
+		httpRouteList := &gatewayv1.HTTPRouteList{}
+		if err := r.List(ctx, httpRouteList, client.InNamespace(controllerNamespace)); err != nil {
+			return ""
+		}
+
+		// Find HTTPRoute that points to rollout-dashboard service
+		for i := range httpRouteList.Items {
+			httpRoute := &httpRouteList.Items[i]
+
+			// Check if any rule references rollout-dashboard service
+			for _, rule := range httpRoute.Spec.Rules {
+				for _, backendRef := range rule.BackendRefs {
+					// Check if this backendRef points to rollout-dashboard service
+					// Default to Service kind if not specified
+					kind := gatewayv1.Kind("Service")
+					if backendRef.Kind != nil {
+						kind = *backendRef.Kind
+					}
+					if kind != gatewayv1.Kind("Service") {
+						continue
+					}
+
+					// Check namespace - default to HTTPRoute's namespace if not specified
+					backendNamespace := controllerNamespace
+					if backendRef.Namespace != nil {
+						backendNamespace = string(*backendRef.Namespace)
+					}
+
+					// Only check if backend is in the same namespace as the service
+					if backendNamespace == controllerNamespace && backendRef.Name == gatewayv1.ObjectName("rollout-dashboard") {
+						// Found HTTPRoute pointing to rollout-dashboard
+						// Now we need to get the Gateway to find the hostname
+						if len(httpRoute.Spec.ParentRefs) == 0 {
+							continue
+						}
+
+						// Get the first parent Gateway
+						parentRef := httpRoute.Spec.ParentRefs[0]
+						gatewayName := string(parentRef.Name)
+						gatewayNamespace := controllerNamespace
+						if parentRef.Namespace != nil {
+							gatewayNamespace = string(*parentRef.Namespace)
+						}
+
+						gateway := &gatewayv1.Gateway{}
+						if err := r.Get(ctx, types.NamespacedName{
+							Name:      gatewayName,
+							Namespace: gatewayNamespace,
+						}, gateway); err != nil {
+							continue
+						}
+
+						// Find a listener with a hostname
+						for _, listener := range gateway.Spec.Listeners {
+							if listener.Hostname != nil && *listener.Hostname != "" {
+								scheme := "https"
+								if listener.Protocol == gatewayv1.HTTPProtocolType {
+									scheme = "http"
+								}
+								baseURL = fmt.Sprintf("%s://%s", scheme, string(*listener.Hostname))
+								break
+							}
+						}
+
+						if baseURL != "" {
+							break
+						}
+					}
+				}
+				if baseURL != "" {
+					break
+				}
+			}
+			if baseURL != "" {
+				break
+			}
+		}
+	}
+
+	if baseURL == "" {
 		return ""
 	}
 
