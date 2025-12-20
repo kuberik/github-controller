@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -89,6 +90,18 @@ var _ = Describe("Environment Controller", func() {
 				}
 			}
 		}
+	}
+
+	// Helper function to create deployment payload with history entry
+	createDeploymentPayload := func(historyID string, historyEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) ([]byte, error) {
+		payload := struct {
+			ID                     string                                         `json:"id"`
+			DeploymentHistoryEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry `json:"deploymentHistoryEntry,omitempty"`
+		}{
+			ID:                     historyID,
+			DeploymentHistoryEntry: historyEntry,
+		}
+		return json.Marshal(payload)
 	}
 
 	// Helper function to create GitHub token secret
@@ -1538,12 +1551,27 @@ var _ = Describe("Environment Controller", func() {
 			stagingTag := "v1.0.0" // Tag that matches the staging revision
 			stagingEnv := "kuberik/test-deployment-deps/staging"
 			stagingTask := "deploy:kuberik/test-deployment-deps"
+
+			// Create DeploymentHistoryEntry for staging deployment
+			stagingHistoryEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				ID: k8sptr.To(int64(100)),
+				Version: kuberikrolloutv1alpha1.VersionInfo{
+					Tag:      stagingTag,
+					Revision: &stagingRef,
+				},
+				Timestamp: metav1.Now(),
+				Message:   github.String("Staging deployment"),
+			}
+			payloadJSON, err := createDeploymentPayload("100", stagingHistoryEntry)
+			Expect(err).ToNot(HaveOccurred())
+
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
 				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
+				Payload:               payloadJSON,
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1756,9 +1784,10 @@ var _ = Describe("Environment Controller", func() {
 			// Verify both revisions are tracked
 			revisionsFound := make(map[string]bool)
 			for _, status := range productionStatuses {
-				revisionsFound[status.Version] = true
-				Expect(status.Status).ToNot(BeEmpty())
-				Expect(status.DeploymentID).ToNot(BeNil())
+				if status.Version.Revision != nil {
+					revisionsFound[*status.Version.Revision] = true
+				}
+				Expect(status.ID).ToNot(BeNil())
 			}
 			Expect(revisionsFound[revision1]).To(BeTrue())
 			Expect(revisionsFound[revision2]).To(BeTrue())
@@ -1780,12 +1809,27 @@ var _ = Describe("Environment Controller", func() {
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			stagingEnv := "kuberik/test-deployment-relevant/staging"
 			stagingTask := "deploy:kuberik/test-deployment-relevant"
+
+			// Create DeploymentHistoryEntry for staging deployment
+			stagingHistoryEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				ID: k8sptr.To(int64(100)),
+				Version: kuberikrolloutv1alpha1.VersionInfo{
+					Tag:      "v1.0.0-staging",
+					Revision: &stagingRef,
+				},
+				Timestamp: metav1.Now(),
+				Message:   github.String("Staging deployment"),
+			}
+			payloadJSON, err := createDeploymentPayload("100", stagingHistoryEntry)
+			Expect(err).ToNot(HaveOccurred())
+
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
 				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
+				Payload:               payloadJSON,
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -1889,9 +1933,9 @@ var _ = Describe("Environment Controller", func() {
 			// Verify staging version is tracked
 			stagingVersionFound := false
 			for _, status := range stagingStatuses {
-				if status.Version == stagingRef {
+				if status.Version.Revision != nil && *status.Version.Revision == stagingRef {
 					stagingVersionFound = true
-					Expect(status.Status).To(Equal("success"))
+					Expect(status.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -1984,10 +2028,9 @@ var _ = Describe("Environment Controller", func() {
 
 			revision1Found := false
 			for _, status := range productionStatuses {
-				if status.Version == revision1 {
+				if status.Version.Revision != nil && *status.Version.Revision == revision1 {
 					revision1Found = true
-					Expect(status.Status).ToNot(BeEmpty())
-					Expect(status.DeploymentID).ToNot(BeNil())
+					Expect(status.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -2037,7 +2080,9 @@ var _ = Describe("Environment Controller", func() {
 
 			revisionsFound := make(map[string]bool)
 			for _, status := range productionStatuses {
-				revisionsFound[status.Version] = true
+				if status.Version.Revision != nil {
+					revisionsFound[*status.Version.Revision] = true
+				}
 			}
 			Expect(revisionsFound[revision1]).To(BeTrue())
 			Expect(revisionsFound[revision2]).To(BeTrue())
@@ -2173,7 +2218,9 @@ var _ = Describe("Environment Controller", func() {
 			// Should only have revision2 now
 			revisionsFound := make(map[string]bool)
 			for _, status := range productionStatuses {
-				revisionsFound[status.Version] = true
+				if status.Version.Revision != nil {
+					revisionsFound[*status.Version.Revision] = true
+				}
 			}
 			Expect(revisionsFound[revision2]).To(BeTrue())
 			Expect(revisionsFound[revision1]).To(BeFalse(), "revision1 should be removed from DeploymentStatuses")
@@ -2194,12 +2241,27 @@ var _ = Describe("Environment Controller", func() {
 			stagingRef := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
 			stagingEnv := "kuberik/test-deployment-status-env/staging"
 			stagingTask := "deploy:kuberik/test-deployment-status-env"
+
+			// Create DeploymentHistoryEntry for staging deployment
+			stagingHistoryEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				ID: k8sptr.To(int64(100)),
+				Version: kuberikrolloutv1alpha1.VersionInfo{
+					Tag:      "v1.0.0-staging",
+					Revision: &stagingRef,
+				},
+				Timestamp: metav1.Now(),
+				Message:   github.String("Staging deployment"),
+			}
+			payloadJSON, err := createDeploymentPayload("100", stagingHistoryEntry)
+			Expect(err).ToNot(HaveOccurred())
+
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
 				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
+				Payload:               payloadJSON,
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "environment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())
@@ -2310,12 +2372,9 @@ var _ = Describe("Environment Controller", func() {
 			// Verify staging status entry has correct information
 			stagingVersionFound := false
 			for _, status := range stagingStatuses {
-				if status.Version == stagingRef {
+				if status.Version.Revision != nil && *status.Version.Revision == stagingRef {
 					stagingVersionFound = true
-					Expect(status.Status).To(Equal("success"))
-					Expect(status.DeploymentID).ToNot(BeNil())
-					// DeploymentURL should not be set for non-current environments
-					Expect(status.DeploymentURL).To(BeEmpty())
+					Expect(status.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -2340,12 +2399,27 @@ var _ = Describe("Environment Controller", func() {
 			// Create staging deployment
 			stagingEnv := "kuberik/test-deployment-relevant-graph/staging"
 			stagingTask := "deploy:kuberik/test-deployment-relevant-graph"
+
+			// Create DeploymentHistoryEntry for staging deployment
+			stagingHistoryEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				ID: k8sptr.To(int64(100)),
+				Version: kuberikrolloutv1alpha1.VersionInfo{
+					Tag:      "v1.0.0-staging",
+					Revision: &stagingRef,
+				},
+				Timestamp: metav1.Now(),
+				Message:   github.String("Staging deployment"),
+			}
+			payloadJSON, err := createDeploymentPayload("100", stagingHistoryEntry)
+			Expect(err).ToNot(HaveOccurred())
+
 			stagingDeploymentRequest := &github.DeploymentRequest{
 				Ref:                   github.String(stagingRef),
 				Environment:           github.String(stagingEnv),
 				Task:                  github.String(stagingTask),
 				ProductionEnvironment: github.Bool(false),
 				AutoMerge:             github.Bool(false),
+				Payload:               payloadJSON,
 			}
 			stagingDeployment, _, err := githubClient.Repositories.CreateDeployment(context.Background(), "kuberik", "deployment-controller-testing", stagingDeploymentRequest)
 			Expect(err).ToNot(HaveOccurred())

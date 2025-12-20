@@ -151,42 +151,113 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 			It("should add new entries and update existing ones", func() {
 				m := newDeploymentStatusMap(nil)
 				deploymentID := int64(123)
+				revision := "v1.0.0"
 
 				// Add new entry
-				m.set("production", "v1.0.0", "pending", &deploymentID, "https://github.com/owner/repo/deployments/123")
+				historyEntry1 := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: &deploymentID,
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &revision,
+					},
+					Timestamp: metav1.Now(),
+				}
+				m.set("production", historyEntry1)
 				statuses := m.toSlice()
 				Expect(statuses).To(HaveLen(1))
-				Expect(statuses[0].Status).To(Equal("pending"))
+				Expect(statuses[0].ID).ToNot(BeNil())
+				Expect(*statuses[0].ID).To(Equal(deploymentID))
 
 				// Update existing entry
-				m.set("production", "v1.0.0", "success", &deploymentID, "https://github.com/owner/repo/deployments/123")
+				historyEntry2 := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: &deploymentID,
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &revision,
+					},
+					Timestamp: metav1.Now(),
+				}
+				m.set("production", historyEntry2)
 				statuses = m.toSlice()
 				Expect(statuses).To(HaveLen(1))
-				Expect(statuses[0].Status).To(Equal("success"))
+				Expect(statuses[0].ID).ToNot(BeNil())
+				Expect(*statuses[0].ID).To(Equal(deploymentID))
 			})
 
 			It("should track multiple versions and environments independently", func() {
 				m := newDeploymentStatusMap(nil)
 
-				m.set("production", "v1.0.0", "success", k8sptr.To(int64(123)), "https://github.com/owner/repo/deployments/123")
-				m.set("production", "v1.1.0", "in_progress", k8sptr.To(int64(456)), "https://github.com/owner/repo/deployments/456")
-				m.set("staging", "v1.0.0", "pending", k8sptr.To(int64(789)), "https://github.com/owner/repo/deployments/789")
+				rev1 := "v1.0.0"
+				rev2 := "v1.1.0"
+				historyEntry1 := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: k8sptr.To(int64(123)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &rev1,
+					},
+					Timestamp: metav1.Now(),
+				}
+				historyEntry2 := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: k8sptr.To(int64(456)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &rev2,
+					},
+					Timestamp: metav1.Now(),
+				}
+				historyEntry3 := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: k8sptr.To(int64(789)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &rev1,
+					},
+					Timestamp: metav1.Now(),
+				}
+
+				m.set("production", historyEntry1)
+				m.set("production", historyEntry2)
+				m.set("staging", historyEntry3)
 
 				statuses := m.toSlice()
 				Expect(statuses).To(HaveLen(3))
 			})
 
 			It("should remove entries matching the filter", func() {
+				rev1 := "v1.0.0"
+				rev2 := "v1.1.0"
 				initial := []kuberikv1alpha1.EnvironmentStatusEntry{
-					{Environment: "production", Version: "v1.0.0", Status: "success"},
-					{Environment: "production", Version: "v1.1.0", Status: "success"},
-					{Environment: "staging", Version: "v1.0.0", Status: "pending"},
+					{
+						Environment: "production",
+						DeploymentHistoryEntry: kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+							Version: kuberikrolloutv1alpha1.VersionInfo{
+								Revision: &rev1,
+							},
+							Timestamp: metav1.Now(),
+						},
+					},
+					{
+						Environment: "production",
+						DeploymentHistoryEntry: kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+							Version: kuberikrolloutv1alpha1.VersionInfo{
+								Revision: &rev2,
+							},
+							Timestamp: metav1.Now(),
+						},
+					},
+					{
+						Environment: "staging",
+						DeploymentHistoryEntry: kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+							Version: kuberikrolloutv1alpha1.VersionInfo{
+								Revision: &rev1,
+							},
+							Timestamp: metav1.Now(),
+						},
+					},
 				}
 
 				m := newDeploymentStatusMap(initial)
 				versionsInHistory := map[string]bool{"v1.1.0": true}
 				m.remove(func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
-					return entry.Environment == "production" && !versionsInHistory[entry.Version]
+					version := ""
+					if entry.Version.Revision != nil {
+						version = *entry.Version.Revision
+					}
+					return entry.Environment == "production" && !versionsInHistory[version]
 				})
 
 				statuses := m.toSlice()
@@ -194,26 +265,62 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 			})
 
 			It("should correctly compare with existing statuses", func() {
+				rev1 := "v1.0.0"
+				id1 := int64(1)
+				id2 := int64(2)
 				existing := []kuberikv1alpha1.EnvironmentStatusEntry{
-					{Environment: "production", Version: "v1.0.0", Status: "success"},
-					{Environment: "staging", Version: "v1.0.0", Status: "pending"},
+					{
+						Environment: "production",
+						DeploymentHistoryEntry: kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+							ID: &id1,
+							Version: kuberikrolloutv1alpha1.VersionInfo{
+								Revision: &rev1,
+							},
+							Timestamp: metav1.Now(),
+						},
+					},
+					{
+						Environment: "staging",
+						DeploymentHistoryEntry: kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+							ID: &id2,
+							Version: kuberikrolloutv1alpha1.VersionInfo{
+								Revision: &rev1,
+							},
+							Timestamp: metav1.Now(),
+						},
+					},
 				}
 
 				m := newDeploymentStatusMap(existing)
 				Expect(m.equal(existing)).To(BeTrue())
 
-				m.set("production", "v1.0.0", "failure", nil, "")
+				id3 := int64(3)
+				historyEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: &id3,
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &rev1,
+					},
+					Timestamp: metav1.Now(),
+				}
+				m.set("production", historyEntry)
 				Expect(m.equal(existing)).To(BeFalse())
 			})
 
-			It("should handle nil deployment ID and empty URL", func() {
+			It("should handle nil deployment ID", func() {
 				m := newDeploymentStatusMap(nil)
-				m.set("production", "v1.0.0", "pending", nil, "")
+				rev := "v1.0.0"
+				historyEntry := &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID: nil,
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Revision: &rev,
+					},
+					Timestamp: metav1.Now(),
+				}
+				m.set("production", historyEntry)
 
 				statuses := m.toSlice()
 				Expect(statuses).To(HaveLen(1))
-				Expect(statuses[0].DeploymentID).To(BeNil())
-				Expect(statuses[0].DeploymentURL).To(BeEmpty())
+				Expect(statuses[0].ID).To(BeNil())
 			})
 		})
 	})

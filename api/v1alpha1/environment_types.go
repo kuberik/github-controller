@@ -19,6 +19,8 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -98,21 +100,8 @@ type EnvironmentStatusEntry struct {
 	// +required
 	Environment string `json:"environment"`
 
-	// Version is the version/revision being tracked
-	// +required
-	Version string `json:"version"`
-
-	// Status is the deployment status state (e.g., "success", "failure", "in_progress", "pending", "inactive")
-	// +required
-	Status string `json:"status"`
-
-	// DeploymentID is the deployment ID (backend-specific)
-	// +optional
-	DeploymentID *int64 `json:"deploymentId,omitempty"`
-
-	// DeploymentURL is the URL of the deployment (backend-specific)
-	// +optional
-	DeploymentURL string `json:"deploymentUrl,omitempty"`
+	// DeploymentHistoryEntry embeds the entire deployment history entry from the Rollout
+	kuberikrolloutv1alpha1.DeploymentHistoryEntry `json:",inline"`
 }
 
 // EnvironmentInfo represents information about an environment's deployment.
