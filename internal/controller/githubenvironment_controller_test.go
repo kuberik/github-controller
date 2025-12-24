@@ -2430,8 +2430,9 @@ var _ = Describe("Environment Controller", func() {
 							Tag:      "v1.0.0-staging",
 							Revision: &stagingRevision,
 						},
-						Timestamp:  metav1.Now(),
-						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusSucceeded),
+						Timestamp: metav1.Now(),
+						// Start with Pending status - will transition to Succeeded in test
+						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusPending),
 					},
 				},
 			}
@@ -2557,8 +2558,40 @@ var _ = Describe("Environment Controller", func() {
 			Expect(len(stagingInfo.History)).To(Equal(1))
 			Expect(stagingInfo.History[0].Version.Revision).ToNot(BeNil())
 			Expect(*stagingInfo.History[0].Version.Revision).To(Equal(stagingRevision))
+			// Initially should have Pending status (set in initial rollout status)
 			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
-			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded))
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending), "staging history should initially show Pending status")
+
+			By("Updating staging rollout bake status to Succeeded and verifying it updates in production Environment")
+			stagingRollout.Status.History[0].BakeStatus = k8sptr.To(kuberikrolloutv1alpha1.BakeStatusSucceeded)
+			stagingRollout.Status.History[0].BakeStatusMessage = k8sptr.To("Bake completed successfully")
+			Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+			// Reconcile production environment again to sync Succeeded status
+			result, err = reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			// Verify staging history was updated to Succeeded
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-production-env",
+				Namespace: DeploymentNamespace,
+			}, updatedProductionEnv)).To(Succeed())
+
+			stagingInfo = nil
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(stagingInfo.History).ToNot(BeEmpty())
+			Expect(len(stagingInfo.History)).To(Equal(1))
+			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded), "staging history should be updated to Succeeded status")
+			Expect(stagingInfo.History[0].BakeStatusMessage).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatusMessage).To(Equal("Bake completed successfully"))
 		})
 
 		It("Should only track relevant versions based on relationship graph", func() {

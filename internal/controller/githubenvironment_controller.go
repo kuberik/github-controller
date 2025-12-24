@@ -1210,7 +1210,8 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	// Now fetch history from rollouts for each environment
 	// First, try to get history from Environment resources (most accurate)
 	envHistory := make(map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
-	// Reuse environmentList from above
+	// Re-fetch environmentList to ensure we have the latest (in case it was modified)
+	environmentList = &kuberikv1alpha1.EnvironmentList{}
 	if err := r.List(ctx, environmentList, client.InNamespace(environment.Namespace)); err == nil {
 		for i := range environmentList.Items {
 			env := &environmentList.Items[i]
@@ -1427,22 +1428,28 @@ func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironm
 		environment.Status.EnvironmentInfos = []kuberikv1alpha1.EnvironmentInfo{}
 	}
 
-	environmentInfoList := environment.Status.EnvironmentInfos
+	// Make a deep copy of the environment infos to avoid modifying the original slice
+	// This is necessary so that environmentInfosEqual can properly detect changes
+	environmentInfoList := make([]kuberikv1alpha1.EnvironmentInfo, len(environment.Status.EnvironmentInfos))
+	for i := range environment.Status.EnvironmentInfos {
+		environmentInfoList[i] = *environment.Status.EnvironmentInfos[i].DeepCopy()
+	}
 
 	// Update or add environment infos with history from graphData
 	for envName, info := range graphData.environmentInfos {
 		// Get history for this environment
 		history := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{}
 		if envHistory, exists := graphData.envHistory[envName]; exists {
-			// Filter history to only include relevant versions
+			// Include all history entries (don't filter by relevantVersions here, as that would
+			// prevent new versions from being included. The relevantVersions set is built from
+			// existing history, so new versions wouldn't be in it yet)
 			for _, entry := range envHistory {
 				if entry.Version.Revision != nil && *entry.Version.Revision != "" {
-					if graphData.relevantVersions[*entry.Version.Revision] {
-						history = append(history, entry)
-					}
+					history = append(history, entry)
 				}
 			}
 		}
+
 		environmentInfoList = updateEnvironmentInfoWithHistory(environmentInfoList, envName, info.EnvironmentURL, info.Relationship, history)
 	}
 
@@ -1485,6 +1492,7 @@ func updateEnvironmentInfoWithRelationship(infos []kuberikv1alpha1.EnvironmentIn
 }
 
 // updateEnvironmentInfoWithHistory updates or adds an environment info entry with history
+// It always updates history if provided, even if it appears equal, to ensure we have the latest data
 func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship, history []kuberikrolloutv1alpha1.DeploymentHistoryEntry) []kuberikv1alpha1.EnvironmentInfo {
 	// Find existing entry
 	for i := range infos {
@@ -1492,10 +1500,9 @@ func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, e
 			infos[i].EnvironmentURL = environmentURL
 			infos[i].Relationship = relationship
 			if history != nil {
-				// Only update history if provided and different
-				if !historyEntriesEqual(infos[i].History, history) {
-					infos[i].History = history
-				}
+				// Always update history if provided to ensure we have the latest data
+				// The comparison in environmentInfosEqual will detect if it actually changed
+				infos[i].History = history
 			}
 			return infos
 		}
@@ -1521,32 +1528,37 @@ func removeEnvironmentInfos(infos []kuberikv1alpha1.EnvironmentInfo, shouldRemov
 }
 
 // historyEntriesEqual compares two DeploymentHistoryEntry slices for equality
+// It compares entries by ID (which uniquely identifies a history entry) and all relevant fields
 func historyEntriesEqual(a, b []kuberikrolloutv1alpha1.DeploymentHistoryEntry) bool {
 	if len(a) != len(b) {
 		return false
 	}
 
-	// Create maps for easier comparison: key is "revision"
+	// Create maps for easier comparison: key is ID (or revision if ID is not available)
 	aMap := make(map[string]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
 	bMap := make(map[string]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
 
 	for _, entry := range a {
-		revision := ""
-		if entry.Version.Revision != nil {
-			revision = *entry.Version.Revision
+		key := ""
+		if entry.ID != nil {
+			key = fmt.Sprintf("id:%d", *entry.ID)
+		} else if entry.Version.Revision != nil {
+			key = fmt.Sprintf("rev:%s", *entry.Version.Revision)
 		}
-		if revision != "" {
-			aMap[revision] = entry
+		if key != "" {
+			aMap[key] = entry
 		}
 	}
 
 	for _, entry := range b {
-		revision := ""
-		if entry.Version.Revision != nil {
-			revision = *entry.Version.Revision
+		key := ""
+		if entry.ID != nil {
+			key = fmt.Sprintf("id:%d", *entry.ID)
+		} else if entry.Version.Revision != nil {
+			key = fmt.Sprintf("rev:%s", *entry.Version.Revision)
 		}
-		if revision != "" {
-			bMap[revision] = entry
+		if key != "" {
+			bMap[key] = entry
 		}
 	}
 
@@ -1554,24 +1566,46 @@ func historyEntriesEqual(a, b []kuberikrolloutv1alpha1.DeploymentHistoryEntry) b
 		return false
 	}
 
-	// Compare entries by ID (which uniquely identifies a history entry)
+	// Compare entries by key (ID or revision)
 	for key, aEntry := range aMap {
 		bEntry, exists := bMap[key]
 		if !exists {
 			return false
 		}
-		// Compare by ID
+		// Compare all relevant fields that can change
+		// ID comparison
 		if (aEntry.ID == nil) != (bEntry.ID == nil) {
 			return false
 		}
 		if aEntry.ID != nil && bEntry.ID != nil && *aEntry.ID != *bEntry.ID {
 			return false
 		}
-		// Also compare bake status to ensure we catch status updates
+		// Bake status comparison
 		if (aEntry.BakeStatus == nil) != (bEntry.BakeStatus == nil) {
 			return false
 		}
 		if aEntry.BakeStatus != nil && bEntry.BakeStatus != nil && *aEntry.BakeStatus != *bEntry.BakeStatus {
+			return false
+		}
+		// Bake status message comparison
+		if (aEntry.BakeStatusMessage == nil) != (bEntry.BakeStatusMessage == nil) {
+			return false
+		}
+		if aEntry.BakeStatusMessage != nil && bEntry.BakeStatusMessage != nil && *aEntry.BakeStatusMessage != *bEntry.BakeStatusMessage {
+			return false
+		}
+		// Bake start time comparison
+		if (aEntry.BakeStartTime == nil) != (bEntry.BakeStartTime == nil) {
+			return false
+		}
+		if aEntry.BakeStartTime != nil && bEntry.BakeStartTime != nil && !aEntry.BakeStartTime.Equal(bEntry.BakeStartTime) {
+			return false
+		}
+		// Bake end time comparison
+		if (aEntry.BakeEndTime == nil) != (bEntry.BakeEndTime == nil) {
+			return false
+		}
+		if aEntry.BakeEndTime != nil && bEntry.BakeEndTime != nil && !aEntry.BakeEndTime.Equal(bEntry.BakeEndTime) {
 			return false
 		}
 	}
