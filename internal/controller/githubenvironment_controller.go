@@ -941,32 +941,84 @@ func extractBakeStatusFromDescription(description string) (*string, *string) {
 
 // applyGitHubStatusToEntry applies GitHub deployment status to a DeploymentHistoryEntry
 // It extracts bake status from the description field which contains it in a predictable format
+// It skips "inactive" statuses that don't have the BAKE_STATUS prefix and looks for the most recent
+// status that does have it, since inactive statuses are often set by GitHub automatically and don't
+// contain our bake status information
 func applyGitHubStatusToEntry(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry, statuses []*github.DeploymentStatus) {
 	if len(statuses) == 0 {
 		return
 	}
 	// Statuses are ordered newest first
-	latestStatus := statuses[0]
-	if latestStatus.Description == nil {
-		return
-	}
+	// Look for the most recent status that has the BAKE_STATUS prefix
+	// Skip "inactive" statuses that don't have it, as they're often set automatically by GitHub
+	for _, status := range statuses {
+		if status.Description == nil {
+			continue
+		}
+		// Skip inactive statuses that don't have BAKE_STATUS prefix
+		// These are often set automatically by GitHub and don't contain our bake status
+		if status.State != nil && *status.State == "inactive" {
+			if !strings.HasPrefix(*status.Description, bakeStatusPrefix) {
+				continue
+			}
+		}
 
-	// Extract bake status and message from description
-	// Format: "BAKE_STATUS:<status>|<message>"
-	bakeStatus, message := extractBakeStatusFromDescription(*latestStatus.Description)
-	if bakeStatus != nil {
-		entry.BakeStatus = bakeStatus
-	}
-	if message != nil {
-		entry.BakeStatusMessage = message
+		// Extract bake status and message from description
+		// Format: "BAKE_STATUS:<status>|<message>"
+		bakeStatus, message := extractBakeStatusFromDescription(*status.Description)
+		if bakeStatus != nil {
+			entry.BakeStatus = bakeStatus
+			if message != nil {
+				entry.BakeStatusMessage = message
+			}
+			return // Found a valid status, stop looking
+		}
 	}
 }
 
 // buildHistoryFromDeployments builds history entries from GitHub deployments
-func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Context, ghClient *github.Client, owner, repo string, deployments []*github.Deployment, rolloutHistoryIDs map[int64]bool, envDeploymentStatuses map[string]map[string]string, envName string) []kuberikrolloutv1alpha1.DeploymentHistoryEntry {
+// If rolloutHistoryOrder is provided, process deployments in that order to ensure all entries get their statuses
+func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Context, ghClient *github.Client, owner, repo string, deployments []*github.Deployment, rolloutHistoryIDs map[int64]bool, rolloutHistoryOrder []int64, envDeploymentStatuses map[string]map[string]string, envName string) []kuberikrolloutv1alpha1.DeploymentHistoryEntry {
 	historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
 	seenIDs := make(map[int64]bool) // Avoid duplicates
 
+	// Build a map of deployment ID -> deployment for quick lookup
+	deploymentMap := make(map[int64]*github.Deployment)
+	for _, d := range deployments {
+		payload := r.extractDeploymentPayload(d)
+		if payload == nil || payload.ID == "" {
+			continue
+		}
+		entryID, err := strconv.ParseInt(payload.ID, 10, 64)
+		if err != nil {
+			continue
+		}
+		if len(rolloutHistoryIDs) > 0 && !rolloutHistoryIDs[entryID] {
+			continue
+		}
+		deploymentMap[entryID] = d
+	}
+
+	// If we have rollout history order, process deployments in that order
+	// Otherwise, process in the order GitHub returns them
+	if len(rolloutHistoryOrder) > 0 {
+		for _, entryID := range rolloutHistoryOrder {
+			d, exists := deploymentMap[entryID]
+			if !exists {
+				continue
+			}
+			if seenIDs[entryID] {
+				continue
+			}
+			// Process this deployment
+			if entry := r.processDeploymentForHistory(ctx, ghClient, owner, repo, d, entryID, envDeploymentStatuses, envName); entry != nil {
+				historyEntries = append(historyEntries, *entry)
+				seenIDs[entryID] = true
+			}
+		}
+	}
+
+	// Process any remaining deployments that weren't in the rollout history order
 	for _, d := range deployments {
 		payload := r.extractDeploymentPayload(d)
 		if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
@@ -989,36 +1041,69 @@ func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Co
 			continue
 		}
 
-		// Build DeploymentHistoryEntry from payload (immutable data) + GitHub status (mutable data)
-		entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
-			ID:        &entryID,
-			Version:   *payload.Version.DeepCopy(),
-			Timestamp: metav1.Now(), // Default to now, could be improved with deployment.created_at
+		// Process this deployment
+		if entry := r.processDeploymentForHistory(ctx, ghClient, owner, repo, d, entryID, envDeploymentStatuses, envName); entry != nil {
+			historyEntries = append(historyEntries, *entry)
+			seenIDs[entryID] = true
 		}
-
-		// Get the latest deployment status from GitHub to get bake status
-		// This is the source of truth for deployment status
-		var statuses []*github.DeploymentStatus
-		if d.ID != nil {
-			var err error
-			statuses, _, err = ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
-			if err == nil {
-				applyGitHubStatusToEntry(&entry, statuses)
-				// Also track GitHub deployment status for this version (for environments without rollouts)
-				if envDeploymentStatuses != nil && d.Ref != nil && *d.Ref != "" && len(statuses) > 0 && statuses[0].State != nil {
-					if envDeploymentStatuses[envName] == nil {
-						envDeploymentStatuses[envName] = make(map[string]string)
-					}
-					envDeploymentStatuses[envName][*d.Ref] = *statuses[0].State
-				}
-			}
-		}
-
-		historyEntries = append(historyEntries, entry)
-		seenIDs[entryID] = true
 	}
 
 	return historyEntries
+}
+
+// processDeploymentForHistory processes a single deployment and returns a DeploymentHistoryEntry
+// It fetches the deployment status from GitHub and applies it to the entry
+func (r *GitHubEnvironmentReconciler) processDeploymentForHistory(ctx context.Context, ghClient *github.Client, owner, repo string, d *github.Deployment, entryID int64, envDeploymentStatuses map[string]map[string]string, envName string) *kuberikrolloutv1alpha1.DeploymentHistoryEntry {
+	payload := r.extractDeploymentPayload(d)
+	if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
+		return nil
+	}
+
+	// Build DeploymentHistoryEntry from payload (immutable data) + GitHub status (mutable data)
+	entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+		ID:        &entryID,
+		Version:   *payload.Version.DeepCopy(),
+		Timestamp: metav1.Now(), // Default to now, could be improved with deployment.created_at
+	}
+
+	// Get the latest deployment status from GitHub to get bake status
+	// This is the source of truth for deployment status
+	// Fetch all pages to ensure we get the latest status (in case there are many statuses)
+	var statuses []*github.DeploymentStatus
+	if d.ID != nil {
+		allStatuses := make([]*github.DeploymentStatus, 0)
+		statusOpts := &github.ListOptions{PerPage: 100}
+		for {
+			pageStatuses, resp, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), statusOpts)
+			if err != nil {
+				// Log error but continue - we'll add entry without status if fetch fails
+				// This ensures we don't skip deployments due to transient errors
+				log.FromContext(ctx).Error(err, "Failed to list deployment statuses for deployment", "deploymentID", *d.ID, "entryID", entryID, "envName", envName)
+				break
+			}
+			allStatuses = append(allStatuses, pageStatuses...)
+			if resp.NextPage == 0 {
+				break
+			}
+			statusOpts.Page = resp.NextPage
+		}
+		statuses = allStatuses
+	}
+
+	// Always apply statuses if we have them
+	if len(statuses) > 0 {
+		applyGitHubStatusToEntry(&entry, statuses)
+		// Also track GitHub deployment status for this version (for environments without rollouts)
+		if envDeploymentStatuses != nil && d.Ref != nil && *d.Ref != "" && statuses[0].State != nil {
+			if envDeploymentStatuses[envName] == nil {
+				envDeploymentStatuses[envName] = make(map[string]string)
+			}
+			envDeploymentStatuses[envName][*d.Ref] = *statuses[0].State
+		}
+	}
+	// Note: Even if status fetch fails or returns empty, we still add the entry (without bakeStatus)
+
+	return &entry
 }
 
 // applyRolloutGateDesiredState applies the desired state to a RolloutGate based on the Deployment spec.
@@ -1401,18 +1486,29 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 			}
 
 			// Re-fetch deployments after syncing to get the latest status
+			// Fetch all pages to ensure we get all deployments (not just the first page)
 			formattedEnv := formatDeploymentEnvironment(deploymentName, envName)
 			task := formatDeploymentTask(deploymentName)
-			envDeploymentsForEnv, _, err := ghClient.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
+			allDeploymentsForEnv := make([]*github.Deployment, 0)
+			opts := &github.DeploymentsListOptions{
 				Task:        task,
 				Environment: formattedEnv,
-			})
-			if err != nil {
-				continue
+				ListOptions: github.ListOptions{PerPage: 100}, // Fetch up to 100 per page
 			}
-			envDeployments[envName] = envDeploymentsForEnv
+			for {
+				deployments, resp, err := ghClient.Repositories.ListDeployments(ctx, owner, repo, opts)
+				if err != nil {
+					break
+				}
+				allDeploymentsForEnv = append(allDeploymentsForEnv, deployments...)
+				if resp.NextPage == 0 {
+					break
+				}
+				opts.Page = resp.NextPage
+			}
+			envDeployments[envName] = allDeploymentsForEnv
 
-			if len(envDeploymentsForEnv) == 0 {
+			if len(allDeploymentsForEnv) == 0 {
 				// No deployments after sync - skip this environment
 				continue
 			}
@@ -1422,15 +1518,17 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 			// Get rollout history IDs to filter (only for environments with Environment resources)
 			// This ensures we only include history entries that are in the rollout's current history
 			rolloutHistoryIDs := make(map[int64]bool)
+			rolloutHistoryOrder := make([]int64, 0) // Track order of history IDs
 			if rollout != nil {
 				for _, h := range rollout.Status.History {
 					if h.ID != nil {
 						rolloutHistoryIDs[*h.ID] = true
+						rolloutHistoryOrder = append(rolloutHistoryOrder, *h.ID)
 					}
 				}
 			}
 
-			historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, envDeploymentsForEnv, rolloutHistoryIDs, nil, envName)
+			historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, allDeploymentsForEnv, rolloutHistoryIDs, rolloutHistoryOrder, nil, envName)
 			if len(historyEntries) > 0 {
 				envHistory[envName] = historyEntries
 			}
@@ -1459,7 +1557,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 
 		// Collect history entries from deployment payloads + GitHub statuses
 		// For environments without Environment resources, don't filter by rollout history IDs
-		historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, deployments, nil, envDeploymentStatuses, envName)
+		historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, deployments, nil, nil, envDeploymentStatuses, envName)
 		if len(historyEntries) > 0 {
 			envHistory[envName] = historyEntries
 		}
