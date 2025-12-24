@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -2977,5 +2978,256 @@ var _ = Describe("Environment Controller", func() {
 				Expect(len(qaInfo.History)).To(Equal(0), "qa environment should not be tracked as it's not related")
 			}
 		})
+
+		It("Should set bakeStatus for all history entries from GitHub deployment statuses", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating Rollout with multiple history entries")
+			revision1 := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			revision2 := "8bd1ffbf07d9f04b9aba8757303a0f4c328c1743"
+			revision3 := "5220a27a5410a6a5182b9fadf537c6437fcca0b7"
+			rollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-multiple-history",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), rollout)
+			Expect(k8sClient.Create(context.Background(), rollout)).Should(Succeed())
+
+			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(3)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.2.0",
+							Revision: &revision3,
+						},
+						Timestamp: metav1.Now(),
+					},
+					{
+						ID: k8sptr.To(int64(2)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.1.0",
+							Revision: &revision2,
+						},
+						Timestamp: metav1.Now(),
+					},
+					{
+						ID: k8sptr.To(int64(1)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &revision1,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), rollout)).Should(Succeed())
+
+			By("Creating Environment")
+			deployment := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-github-multiple-history",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-multiple-history",
+					},
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "kuberik/environment-controller-testing",
+					},
+					Name:        "test-deployment-multiple-history",
+					Environment: "production",
+				},
+			}
+			k8sClient.Delete(context.Background(), deployment)
+			Expect(k8sClient.Create(context.Background(), deployment)).Should(Succeed())
+
+			By("Reconciling to create GitHub deployments")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-github-multiple-history",
+					Namespace: DeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Getting the created Environment to find deployment IDs")
+			updatedDeployment := &kuberikv1alpha1.Environment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-multiple-history",
+				Namespace: DeploymentNamespace,
+			}, updatedDeployment)).To(Succeed())
+
+			// Get production environment info to find all deployment IDs
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 3))
+
+			By("Creating GitHub deployment statuses with different states for each deployment")
+			token := os.Getenv("GITHUB_TOKEN")
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(context.Background(), ts)
+			githubClient := github.NewClient(tc)
+
+			// Find deployments for each history entry
+			formattedEnv := "kuberik/test-deployment-multiple-history/production"
+			task := "deploy:kuberik/test-deployment-multiple-history"
+			deployments, _, err := githubClient.Repositories.ListDeployments(context.Background(), "kuberik", "environment-controller-testing", &github.DeploymentsListOptions{
+				Task:        task,
+				Environment: formattedEnv,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(deployments)).To(BeNumerically(">=", 3))
+
+			// Map deployments by their payload ID
+			deploymentMap := make(map[string]*github.Deployment)
+			for _, d := range deployments {
+				payload := extractDeploymentPayloadFromTest(d)
+				if payload != nil && payload.ID != "" {
+					deploymentMap[payload.ID] = d
+				}
+			}
+
+			// Create statuses with different states for each deployment
+			// Use the format: "BAKE_STATUS:<status>|<message>"
+			// Entry 3 (latest) -> success
+			if dep, ok := deploymentMap["3"]; ok {
+				successState := "success"
+				statusRequest := &github.DeploymentStatusRequest{
+					State:       &successState,
+					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.2.0 successful", kuberikrolloutv1alpha1.BakeStatusSucceeded)),
+				}
+				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			// Entry 2 -> failure
+			if dep, ok := deploymentMap["2"]; ok {
+				failureState := "failure"
+				statusRequest := &github.DeploymentStatusRequest{
+					State:       &failureState,
+					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.1.0 failed", kuberikrolloutv1alpha1.BakeStatusFailed)),
+				}
+				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			// Entry 1 -> pending
+			if dep, ok := deploymentMap["1"]; ok {
+				pendingState := "pending"
+				statusRequest := &github.DeploymentStatusRequest{
+					State:       &pendingState,
+					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.0.0 pending", kuberikrolloutv1alpha1.BakeStatusPending)),
+				}
+				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			By("Reconciling again to fetch updated statuses")
+			result, err = reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying all history entries have their bakeStatus set correctly")
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-github-multiple-history",
+				Namespace: DeploymentNamespace,
+			}, updatedDeployment)).To(Succeed())
+
+			productionInfo = nil
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 3))
+
+			// Verify all entries have bakeStatus set
+			entryMap := make(map[int64]*kuberikrolloutv1alpha1.DeploymentHistoryEntry)
+			for i := range productionInfo.History {
+				if productionInfo.History[i].ID != nil {
+					entryMap[*productionInfo.History[i].ID] = &productionInfo.History[i]
+				}
+			}
+
+			// Entry 3 should have Succeeded status
+			if entry, ok := entryMap[3]; ok {
+				Expect(entry.BakeStatus).ToNot(BeNil(), "Entry 3 should have bakeStatus set")
+				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded), "Entry 3 should be Succeeded")
+				Expect(entry.BakeStatusMessage).ToNot(BeNil())
+				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.2.0 successful"))
+			}
+
+			// Entry 2 should have Failed status
+			if entry, ok := entryMap[2]; ok {
+				Expect(entry.BakeStatus).ToNot(BeNil(), "Entry 2 should have bakeStatus set")
+				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusFailed), "Entry 2 should be Failed")
+				Expect(entry.BakeStatusMessage).ToNot(BeNil())
+				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.1.0 failed"))
+			}
+
+			// Entry 1 should have Pending status
+			if entry, ok := entryMap[1]; ok {
+				Expect(entry.BakeStatus).ToNot(BeNil(), "Entry 1 should have bakeStatus set")
+				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending), "Entry 1 should be Pending")
+				Expect(entry.BakeStatusMessage).ToNot(BeNil())
+				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.0.0 pending"))
+			}
+		})
 	})
 })
+
+// Helper function to extract deployment payload in tests
+func extractDeploymentPayloadFromTest(d *github.Deployment) *deploymentPayload {
+	if len(d.Payload) == 0 {
+		return nil
+	}
+
+	// Try to decode payload - GitHub API may return it as base64-encoded string or JSON object
+	var payloadBytes []byte
+
+	// First try as base64-encoded string
+	var payloadStr string
+	if err := json.Unmarshal(d.Payload, &payloadStr); err == nil {
+		// Decode base64
+		if decoded, err := base64.StdEncoding.DecodeString(payloadStr); err == nil {
+			payloadBytes = decoded
+		} else {
+			// Not base64, use string as-is
+			payloadBytes = []byte(payloadStr)
+		}
+	} else {
+		// Not a string, use payload directly
+		payloadBytes = d.Payload
+	}
+
+	var payload deploymentPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil
+	}
+
+	return &payload
+}

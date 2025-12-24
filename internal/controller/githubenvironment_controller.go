@@ -768,10 +768,30 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 
 		// Determine desired GH status for this history entry
 		ghState, defaultDesc := mapBakeToGitHubState(h.BakeStatus)
-		// Use the rollout's BakeStatusMessage if available, otherwise use the default
-		ghDesc := defaultDesc
+		// Build description with bake status encoded: "BAKE_STATUS:<status>|<message>"
+		// Use the rollout's BakeStatusMessage if available, otherwise use the default message
+		message := defaultDesc
 		if h.BakeStatusMessage != nil && *h.BakeStatusMessage != "" {
-			ghDesc = *h.BakeStatusMessage
+			message = *h.BakeStatusMessage
+		}
+		// Get the actual bake status value
+		bakeStatusVal := kuberikrolloutv1alpha1.BakeStatusPending
+		if h.BakeStatus != nil {
+			bakeStatusVal = *h.BakeStatus
+		}
+		// Format: "BAKE_STATUS:<status>|<message>"
+		ghDesc := fmt.Sprintf("%s%s|%s", bakeStatusPrefix, bakeStatusVal, message)
+		// Truncate to 140 chars if needed (GitHub limit)
+		if len(ghDesc) > 140 {
+			// Keep the prefix and status, truncate the message part
+			prefixAndStatus := fmt.Sprintf("%s%s|", bakeStatusPrefix, bakeStatusVal)
+			maxMsgLen := 140 - len(prefixAndStatus)
+			if maxMsgLen > 0 {
+				ghDesc = prefixAndStatus + message[:maxMsgLen]
+			} else {
+				// If prefix+status is already too long, just use prefix+status
+				ghDesc = prefixAndStatus[:140]
+			}
 		}
 
 		// Check all statuses to see if we've already created this exact status
@@ -844,24 +864,161 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 	return nil, "", nil, fmt.Errorf("failed to find or create deployment for ID %s and environment %s", latestID, environment.Spec.Environment)
 }
 
+// bakeStatusPrefix is the prefix used in GitHub status descriptions to encode bake status
+const bakeStatusPrefix = "BAKE_STATUS:"
+
 // mapBakeToGitHubState maps bake status/message to GitHub DeploymentStatus state and description
+// The description includes the bake status in a predictable format: "BAKE_STATUS:<status>|<message>"
 func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	var status string
 	if bakeStatus != nil {
 		status = *bakeStatus
 	}
+
+	var ghState string
+	var defaultDesc string
 	switch status {
 	case kuberikrolloutv1alpha1.BakeStatusSucceeded:
-		return "success", "Bake succeeded"
+		ghState = "success"
+		defaultDesc = "Bake succeeded"
 	case kuberikrolloutv1alpha1.BakeStatusFailed:
-		return "failure", "Bake failed"
+		ghState = "failure"
+		defaultDesc = "Bake failed"
 	case kuberikrolloutv1alpha1.BakeStatusInProgress:
-		return "in_progress", "Baking in progress"
+		ghState = "in_progress"
+		defaultDesc = "Baking in progress"
 	case kuberikrolloutv1alpha1.BakeStatusCancelled:
-		return "inactive", "Bake cancelled"
+		ghState = "inactive"
+		defaultDesc = "Bake cancelled"
 	default:
-		return "pending", "Deployment in progress"
+		ghState = "pending"
+		defaultDesc = "Deployment in progress"
+		status = kuberikrolloutv1alpha1.BakeStatusPending
 	}
+
+	// Encode bake status in description: "BAKE_STATUS:<status>|<message>"
+	// This allows us to extract the exact bake status later
+	desc := fmt.Sprintf("%s%s|%s", bakeStatusPrefix, status, defaultDesc)
+	return ghState, desc
+}
+
+// extractBakeStatusFromDescription extracts bake status from GitHub status description
+// Format: "BAKE_STATUS:<status>|<message>" or just "<message>" for backward compatibility
+func extractBakeStatusFromDescription(description string) (*string, *string) {
+	if description == "" {
+		return nil, nil
+	}
+
+	// Check if description contains the bake status prefix
+	if strings.HasPrefix(description, bakeStatusPrefix) {
+		// Extract the part after the prefix
+		afterPrefix := description[len(bakeStatusPrefix):]
+		// Split by "|" to separate status and message
+		parts := strings.SplitN(afterPrefix, "|", 2)
+		if len(parts) >= 1 {
+			bakeStatus := strings.TrimSpace(parts[0])
+			var message *string
+			if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+				msg := strings.TrimSpace(parts[1])
+				// Truncate to 140 chars if needed
+				if len(msg) > 140 {
+					msg = msg[:140]
+				}
+				message = &msg
+			}
+			return &bakeStatus, message
+		}
+	}
+
+	// Backward compatibility: if no prefix, return nil for status but use description as message
+	// Truncate to 140 chars if needed
+	msg := description
+	if len(msg) > 140 {
+		msg = msg[:140]
+	}
+	return nil, &msg
+}
+
+// applyGitHubStatusToEntry applies GitHub deployment status to a DeploymentHistoryEntry
+// It extracts bake status from the description field which contains it in a predictable format
+func applyGitHubStatusToEntry(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry, statuses []*github.DeploymentStatus) {
+	if len(statuses) == 0 {
+		return
+	}
+	// Statuses are ordered newest first
+	latestStatus := statuses[0]
+	if latestStatus.Description == nil {
+		return
+	}
+
+	// Extract bake status and message from description
+	// Format: "BAKE_STATUS:<status>|<message>"
+	bakeStatus, message := extractBakeStatusFromDescription(*latestStatus.Description)
+	if bakeStatus != nil {
+		entry.BakeStatus = bakeStatus
+	}
+	if message != nil {
+		entry.BakeStatusMessage = message
+	}
+}
+
+// buildHistoryFromDeployments builds history entries from GitHub deployments
+func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Context, ghClient *github.Client, owner, repo string, deployments []*github.Deployment, rolloutHistoryIDs map[int64]bool, envDeploymentStatuses map[string]map[string]string, envName string) []kuberikrolloutv1alpha1.DeploymentHistoryEntry {
+	historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
+	seenIDs := make(map[int64]bool) // Avoid duplicates
+
+	for _, d := range deployments {
+		payload := r.extractDeploymentPayload(d)
+		if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
+			continue
+		}
+
+		// Parse ID from payload (stored as string, need to convert to int64)
+		entryID, err := strconv.ParseInt(payload.ID, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		// For environments with Environment resources, only include entries in rollout's current history
+		if len(rolloutHistoryIDs) > 0 && !rolloutHistoryIDs[entryID] {
+			continue
+		}
+
+		// Skip if we've already seen this ID
+		if seenIDs[entryID] {
+			continue
+		}
+
+		// Build DeploymentHistoryEntry from payload (immutable data) + GitHub status (mutable data)
+		entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+			ID:        &entryID,
+			Version:   *payload.Version.DeepCopy(),
+			Timestamp: metav1.Now(), // Default to now, could be improved with deployment.created_at
+		}
+
+		// Get the latest deployment status from GitHub to get bake status
+		// This is the source of truth for deployment status
+		var statuses []*github.DeploymentStatus
+		if d.ID != nil {
+			var err error
+			statuses, _, err = ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
+			if err == nil {
+				applyGitHubStatusToEntry(&entry, statuses)
+				// Also track GitHub deployment status for this version (for environments without rollouts)
+				if envDeploymentStatuses != nil && d.Ref != nil && *d.Ref != "" && len(statuses) > 0 && statuses[0].State != nil {
+					if envDeploymentStatuses[envName] == nil {
+						envDeploymentStatuses[envName] = make(map[string]string)
+					}
+					envDeploymentStatuses[envName][*d.Ref] = *statuses[0].State
+				}
+			}
+		}
+
+		historyEntries = append(historyEntries, entry)
+		seenIDs[entryID] = true
+	}
+
+	return historyEntries
 }
 
 // applyRolloutGateDesiredState applies the desired state to a RolloutGate based on the Deployment spec.
@@ -1262,9 +1419,6 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 
 			// Extract history from GitHub deployment payloads and get latest status
 			// For environments with Environment resources, only include entries that are in the rollout's current history
-			historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
-			seenIDs := make(map[int64]bool) // Avoid duplicates
-
 			// Get rollout history IDs to filter (only for environments with Environment resources)
 			// This ensures we only include history entries that are in the rollout's current history
 			rolloutHistoryIDs := make(map[int64]bool)
@@ -1276,74 +1430,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 				}
 			}
 
-			for _, d := range envDeploymentsForEnv {
-				payload := r.extractDeploymentPayload(d)
-				if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
-					continue
-				}
-
-				// Parse ID from payload (stored as string, need to convert to int64)
-				entryID, err := strconv.ParseInt(payload.ID, 10, 64)
-				if err != nil {
-					continue
-				}
-
-				// For environments with Environment resources, only include entries in rollout's current history
-				if len(rolloutHistoryIDs) > 0 && !rolloutHistoryIDs[entryID] {
-					continue
-				}
-
-				// Skip if we've already seen this ID
-				if seenIDs[entryID] {
-					continue
-				}
-
-				// Build DeploymentHistoryEntry from payload (immutable data) + GitHub status (mutable data)
-				entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
-					ID:        &entryID,
-					Version:   *payload.Version.DeepCopy(),
-					Timestamp: metav1.Now(), // Default to now, could be improved with deployment.created_at
-				}
-
-				// Get the latest deployment status from GitHub to get bake status
-				// This is the source of truth for deployment status
-				if d.ID != nil {
-					statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
-					if err == nil && len(statuses) > 0 {
-						// Statuses are ordered newest first
-						if statuses[0].State != nil {
-							ghState := *statuses[0].State
-							// Map GitHub status to bake status
-							if ghState == "success" {
-								bakeStatus := kuberikrolloutv1alpha1.BakeStatusSucceeded
-								entry.BakeStatus = &bakeStatus
-							} else if ghState == "failure" || ghState == "error" {
-								bakeStatus := kuberikrolloutv1alpha1.BakeStatusFailed
-								entry.BakeStatus = &bakeStatus
-							} else if ghState == "pending" {
-								bakeStatus := kuberikrolloutv1alpha1.BakeStatusPending
-								entry.BakeStatus = &bakeStatus
-							} else if ghState == "in_progress" {
-								bakeStatus := kuberikrolloutv1alpha1.BakeStatusInProgress
-								entry.BakeStatus = &bakeStatus
-							}
-							// Use GitHub status description for BakeStatusMessage (max 140 chars)
-							if statuses[0].Description != nil {
-								desc := *statuses[0].Description
-								// Truncate to 140 characters if needed
-								if len(desc) > 140 {
-									desc = desc[:140]
-								}
-								entry.BakeStatusMessage = &desc
-							}
-						}
-					}
-				}
-
-				historyEntries = append(historyEntries, entry)
-				seenIDs[entryID] = true
-			}
-
+			historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, envDeploymentsForEnv, rolloutHistoryIDs, nil, envName)
 			if len(historyEntries) > 0 {
 				envHistory[envName] = historyEntries
 			}
@@ -1370,82 +1457,9 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 			continue
 		}
 
-		// Initialize status map for this environment
-		if envDeploymentStatuses[envName] == nil {
-			envDeploymentStatuses[envName] = make(map[string]string)
-		}
-
 		// Collect history entries from deployment payloads + GitHub statuses
-		historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
-		seenIDs := make(map[int64]bool) // Avoid duplicates
-		for _, d := range deployments {
-			payload := r.extractDeploymentPayload(d)
-			if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
-				continue
-			}
-
-			// Parse ID from payload
-			entryID, err := strconv.ParseInt(payload.ID, 10, 64)
-			if err != nil {
-				continue
-			}
-
-			// Skip if we've already seen this ID
-			if seenIDs[entryID] {
-				continue
-			}
-
-			// Build DeploymentHistoryEntry from payload (immutable) + GitHub status (mutable)
-			entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
-				ID:        &entryID,
-				Version:   *payload.Version.DeepCopy(),
-				Timestamp: metav1.Now(), // Default to now
-			}
-
-			// Get status from GitHub deployment statuses
-			if d.ID != nil {
-				statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
-				if err == nil && len(statuses) > 0 && statuses[0].State != nil {
-					ghState := *statuses[0].State
-					// Map GitHub status to bake status
-					if ghState == "success" {
-						bakeStatus := kuberikrolloutv1alpha1.BakeStatusSucceeded
-						entry.BakeStatus = &bakeStatus
-					} else if ghState == "failure" || ghState == "error" {
-						bakeStatus := kuberikrolloutv1alpha1.BakeStatusFailed
-						entry.BakeStatus = &bakeStatus
-					} else if ghState == "pending" {
-						bakeStatus := kuberikrolloutv1alpha1.BakeStatusPending
-						entry.BakeStatus = &bakeStatus
-					} else if ghState == "in_progress" {
-						bakeStatus := kuberikrolloutv1alpha1.BakeStatusInProgress
-						entry.BakeStatus = &bakeStatus
-					}
-					// Use GitHub status description for BakeStatusMessage (max 140 chars)
-					if statuses[0].Description != nil {
-						desc := *statuses[0].Description
-						if len(desc) > 140 {
-							desc = desc[:140]
-						}
-						entry.BakeStatusMessage = &desc
-					}
-				}
-			}
-
-			historyEntries = append(historyEntries, entry)
-			seenIDs[entryID] = true
-
-			// Also track GitHub deployment status for this version
-			if d.Ref != nil && *d.Ref != "" {
-				statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
-				if err == nil && len(statuses) > 0 {
-					// Statuses are ordered newest first
-					if statuses[0].State != nil {
-						envDeploymentStatuses[envName][*d.Ref] = *statuses[0].State
-					}
-				}
-			}
-		}
+		// For environments without Environment resources, don't filter by rollout history IDs
+		historyEntries := r.buildHistoryFromDeployments(ctx, ghClient, owner, repo, deployments, nil, envDeploymentStatuses, envName)
 		if len(historyEntries) > 0 {
 			envHistory[envName] = historyEntries
 		}
