@@ -1088,6 +1088,33 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 	}
 
+	// Also discover environments from Environment resources (not just GitHub deployments)
+	// This ensures we find related environments even if they don't have GitHub deployments yet
+	environmentList := &kuberikv1alpha1.EnvironmentList{}
+	if err := r.List(ctx, environmentList, client.InNamespace(environment.Namespace)); err == nil {
+		for i := range environmentList.Items {
+			env := &environmentList.Items[i]
+			// Match by deployment name
+			if env.Spec.Name != environment.Spec.Name {
+				continue
+			}
+			if env.Spec.Environment == "" {
+				continue
+			}
+			envName := env.Spec.Environment
+
+			// Add to discovered environments
+			if envDeployments[envName] == nil {
+				envDeployments[envName] = []*github.Deployment{}
+			}
+
+			// Extract relationship from Environment spec
+			if env.Spec.Relationship != nil {
+				envRelationships[envName] = env.Spec.Relationship
+			}
+		}
+	}
+
 	// Build set of relevant environments based on relationships
 	// Start with current environment and traverse relationships
 	visited := make(map[string]bool)
@@ -1150,10 +1177,40 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		environmentInfos[envName] = envInfo
 	}
 
+	// Also add environment infos for environments discovered from Environment resources (without GitHub deployments)
+	// Reuse environmentList from above
+	for i := range environmentList.Items {
+		env := &environmentList.Items[i]
+		if env.Spec.Name != environment.Spec.Name {
+			continue
+		}
+		if env.Spec.Environment == "" {
+			continue
+		}
+		envName := env.Spec.Environment
+
+		// Only add if not already set from GitHub deployments and if it's a relevant environment
+		if _, exists := environmentInfos[envName]; !exists && relevantEnvironments[envName] {
+			envInfo := struct {
+				EnvironmentURL string
+				Relationship   *kuberikv1alpha1.EnvironmentRelationship
+			}{}
+			if env.Spec.Relationship != nil {
+				envInfo.Relationship = env.Spec.Relationship
+			}
+			environmentInfos[envName] = envInfo
+		} else if exists && environmentInfos[envName].Relationship == nil && env.Spec.Relationship != nil {
+			// Update relationship from Environment spec if not set from GitHub
+			envInfo := environmentInfos[envName]
+			envInfo.Relationship = env.Spec.Relationship
+			environmentInfos[envName] = envInfo
+		}
+	}
+
 	// Now fetch history from rollouts for each environment
 	// First, try to get history from Environment resources (most accurate)
 	envHistory := make(map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
-	environmentList := &kuberikv1alpha1.EnvironmentList{}
+	// Reuse environmentList from above
 	if err := r.List(ctx, environmentList, client.InNamespace(environment.Namespace)); err == nil {
 		for i := range environmentList.Items {
 			env := &environmentList.Items[i]

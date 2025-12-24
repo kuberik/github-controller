@@ -2400,6 +2400,167 @@ var _ = Describe("Environment Controller", func() {
 			Expect(stagingVersionFound).To(BeTrue())
 		})
 
+		It("Should update history for related environments with Environment resources", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating staging Environment and Rollout")
+			stagingRevision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			stagingRollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-staging-env",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), stagingRollout)
+			Expect(k8sClient.Create(context.Background(), stagingRollout)).Should(Succeed())
+
+			stagingRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(200)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0-staging",
+							Revision: &stagingRevision,
+						},
+						Timestamp:  metav1.Now(),
+						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusSucceeded),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+			stagingEnv := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-staging-env",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-staging-env",
+					},
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "kuberik/environment-controller-testing",
+					},
+					Name:        "test-deployment-related-env",
+					Environment: "staging",
+				},
+			}
+			k8sClient.Delete(context.Background(), stagingEnv)
+			Expect(k8sClient.Create(context.Background(), stagingEnv)).Should(Succeed())
+
+			By("Creating production Rollout")
+			productionRevision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			productionRollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-production-env",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), productionRollout)
+			Expect(k8sClient.Create(context.Background(), productionRollout)).Should(Succeed())
+
+			productionRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(300)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &productionRevision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), productionRollout)).Should(Succeed())
+
+			By("Creating production Environment with relationship to staging")
+			productionEnv := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-production-env",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-production-env",
+					},
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "kuberik/environment-controller-testing",
+					},
+					Name:        "test-deployment-related-env",
+					Environment: "production",
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
+						Environment: "staging",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), productionEnv)
+			Expect(k8sClient.Create(context.Background(), productionEnv)).Should(Succeed())
+
+			By("Reconciling production Environment")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-production-env",
+					Namespace: DeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			By("Verifying production environment has its own history")
+			updatedProductionEnv := &kuberikv1alpha1.Environment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-production-env",
+				Namespace: DeploymentNamespace,
+			}, updatedProductionEnv)).To(Succeed())
+
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(productionInfo.History).ToNot(BeEmpty())
+			Expect(len(productionInfo.History)).To(Equal(1))
+			Expect(productionInfo.History[0].Version.Revision).ToNot(BeNil())
+			Expect(*productionInfo.History[0].Version.Revision).To(Equal(productionRevision))
+
+			By("Verifying staging environment history is included in production Environment status")
+			var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(stagingInfo).ToNot(BeNil(), "staging environment info should exist in production Environment status")
+			Expect(stagingInfo.History).ToNot(BeEmpty(), "staging history should not be empty")
+			Expect(len(stagingInfo.History)).To(Equal(1))
+			Expect(stagingInfo.History[0].Version.Revision).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].Version.Revision).To(Equal(stagingRevision))
+			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded))
+		})
+
 		It("Should only track relevant versions based on relationship graph", func() {
 			skipIfNoGitHubToken()
 
