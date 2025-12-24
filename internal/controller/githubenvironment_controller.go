@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,11 +45,12 @@ import (
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 )
 
-// deploymentPayload represents the payload stored in GitHub deployments for mapping
+// deploymentPayload represents the payload stored in GitHub deployments
+// Only immutable data should be stored here since GitHub deployments cannot be updated
 type deploymentPayload struct {
-	ID                     string                                         `json:"id"`                               // Stored as string in JSON for consistency
-	Relationship           *kuberikv1alpha1.EnvironmentRelationship       `json:"relationship,omitempty"`           // Relationship for this environment
-	DeploymentHistoryEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry `json:"deploymentHistoryEntry,omitempty"` // The entire deployment history entry
+	ID           string                                   `json:"id"`                     // History entry ID (immutable)
+	Relationship *kuberikv1alpha1.EnvironmentRelationship `json:"relationship,omitempty"` // Relationship for this environment
+	Version      *kuberikrolloutv1alpha1.VersionInfo      `json:"version,omitempty"`      // Version information (immutable)
 }
 
 // deploymentKey represents a unique key for mapping deployments by ID and environment
@@ -117,7 +120,7 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Sync entire rollout history with GitHub deployments and statuses
-	deploymentID, deploymentURL, _, err := r.syncDeploymentHistory(ctx, githubClient, deployment, rollout)
+	deploymentID, deploymentURL, versionDeployments, err := r.syncDeploymentHistory(ctx, githubClient, deployment, rollout)
 	if err != nil {
 		log.Error(err, "Failed to sync deployment history")
 		return ctrl.Result{}, err
@@ -128,8 +131,8 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
-	// Update Environment status
-	if err := r.updateEnvironmentStatus(ctx, deployment, deploymentID, deploymentURL, rollout); err != nil {
+	// Update Environment status - use versionDeployments which has history with latest GitHub status
+	if err := r.updateEnvironmentStatus(ctx, deployment, deploymentID, deploymentURL, versionDeployments); err != nil {
 		log.Error(err, "Failed to update Environment status")
 		return ctrl.Result{}, err
 	}
@@ -212,6 +215,9 @@ func (r *GitHubEnvironmentReconciler) rolloutToEnvironment(ctx context.Context, 
 }
 
 // getReferencedRollout gets the Rollout referenced by the Environment
+// It uses the regular client which uses cache, but the cache should be kept up to date
+// by the controller-runtime watch mechanism. For related environments, we want fresh data
+// so we ensure we get the latest status.
 func (r *GitHubEnvironmentReconciler) getReferencedRollout(ctx context.Context, deployment *kuberikv1alpha1.Environment) (*kuberikrolloutv1alpha1.Rollout, error) {
 	rollout := &kuberikrolloutv1alpha1.Rollout{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -316,7 +322,8 @@ func (r *GitHubEnvironmentReconciler) getCurrentVersionFromRollout(rollout *kube
 }
 
 // updateEnvironmentStatus updates the Environment status with GitHub deployment information
-func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Context, environment *kuberikv1alpha1.Environment, deploymentID *int64, deploymentURL string, rollout *kuberikrolloutv1alpha1.Rollout) error {
+// versionDeployments contains history entries with the latest GitHub deployment status
+func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Context, environment *kuberikv1alpha1.Environment, deploymentID *int64, deploymentURL string, versionDeployments map[string]versionDeploymentInfo) error {
 	needsUpdate := false
 
 	// Update deployment ID
@@ -331,54 +338,35 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 		needsUpdate = true
 	}
 
+	// Update current version - get from versionDeployments (newest entry)
+	var currentVersion *string
+
+	// Find the newest version from versionDeployments to set as current version
+	revisions := make([]string, 0, len(versionDeployments))
+	for rev := range versionDeployments {
+		revisions = append(revisions, rev)
+	}
+	// Sort in reverse order (newest first)
+	sort.Slice(revisions, func(i, j int) bool {
+		return revisions[i] > revisions[j]
+	})
+
+	if len(revisions) > 0 {
+		versionInfo := versionDeployments[revisions[0]]
+		if versionInfo.HistoryEntry != nil && versionInfo.HistoryEntry.Version.Revision != nil {
+			currentVersion = versionInfo.HistoryEntry.Version.Revision
+		}
+	}
+
 	// Update current version
-	currentVersion := r.getCurrentVersionFromRollout(rollout)
 	if currentVersion != nil && environment.Status.CurrentVersion != *currentVersion {
 		environment.Status.CurrentVersion = *currentVersion
 		needsUpdate = true
 	}
 
-	// Update history for current environment from rollout
-	currentEnv := environment.Spec.Environment
-
-	// Build history entries for current environment from rollout
-	newHistory := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0, len(rollout.Status.History))
-	for _, entry := range rollout.Status.History {
-		// Only include entries with valid revision
-		if entry.Version.Revision != nil && *entry.Version.Revision != "" {
-			newHistory = append(newHistory, entry)
-		}
-	}
-
-	// Update or create EnvironmentInfo for current environment with history
-	if environment.Status.EnvironmentInfos == nil {
-		environment.Status.EnvironmentInfos = []kuberikv1alpha1.EnvironmentInfo{}
-	}
-
-	// Find or create EnvironmentInfo for current environment
-	envInfoIndex := -1
-	for i, info := range environment.Status.EnvironmentInfos {
-		if info.Environment == currentEnv {
-			envInfoIndex = i
-			break
-		}
-	}
-
-	if envInfoIndex == -1 {
-		// Create new EnvironmentInfo
-		environment.Status.EnvironmentInfos = append(environment.Status.EnvironmentInfos, kuberikv1alpha1.EnvironmentInfo{
-			Environment: currentEnv,
-			History:     newHistory,
-		})
-		needsUpdate = true
-	} else {
-		// Update existing EnvironmentInfo
-		envInfo := &environment.Status.EnvironmentInfos[envInfoIndex]
-		if !historyEntriesEqual(envInfo.History, newHistory) {
-			envInfo.History = newHistory
-			needsUpdate = true
-		}
-	}
+	// Note: History for the current environment is now built from GitHub deployments
+	// in buildRelationshipGraph, just like related environments. It will be updated
+	// in updateDeploymentStatusesForRelatedEnvironments along with all other environments.
 
 	if needsUpdate {
 		// Update last status change time only when status actually changes
@@ -633,7 +621,11 @@ func (r *GitHubEnvironmentReconciler) extractDeploymentPayload(dep *github.Deplo
 	}
 
 	var payload deploymentPayload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil || payload.ID == "" {
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil
+	}
+	// Ensure payload has required fields
+	if payload.ID == "" || payload.Version == nil {
 		return nil
 	}
 
@@ -651,6 +643,7 @@ func (r *GitHubEnvironmentReconciler) extractDeploymentKey(dep *github.Deploymen
 		return nil
 	}
 
+	// Get ID from payload
 	return &deploymentKey{
 		ID:          payload.ID,
 		Environment: *dep.Environment,
@@ -744,10 +737,12 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 
 		if dep == nil {
 			// Create missing deployment for this history entry
+			// Only store immutable data in payload: ID, relationship, and version
+			// Status and other mutable fields come from GitHub deployment statuses
 			payload := deploymentPayload{
-				ID:                     historyID,
-				Relationship:           environment.Spec.Relationship,
-				DeploymentHistoryEntry: &h,
+				ID:           historyID,
+				Relationship: environment.Spec.Relationship,
+				Version:      h.Version.DeepCopy(),
 			}
 			payloadJSON, err := json.Marshal(payload)
 			if err != nil {
@@ -772,7 +767,12 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 		}
 
 		// Determine desired GH status for this history entry
-		ghState, ghDesc := mapBakeToGitHubState(h.BakeStatus)
+		ghState, defaultDesc := mapBakeToGitHubState(h.BakeStatus)
+		// Use the rollout's BakeStatusMessage if available, otherwise use the default
+		ghDesc := defaultDesc
+		if h.BakeStatusMessage != nil && *h.BakeStatusMessage != "" {
+			ghDesc = *h.BakeStatusMessage
+		}
 
 		// Check all statuses to see if we've already created this exact status
 		// This prevents duplicate statuses like: pending -> success -> pending
@@ -1207,16 +1207,18 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 	}
 
-	// Now fetch history from rollouts for each environment
-	// First, try to get history from Environment resources (most accurate)
+	// Now fetch history from GitHub deployments for all relevant environments (current and related)
+	// We use GitHub deployments as the source of truth. If an environment doesn't have
+	// deployments yet, we ensure they're created by syncing its history.
 	envHistory := make(map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
-	// Re-fetch environmentList to ensure we have the latest (in case it was modified)
+
+	// Process all relevant environments (current and related) the same way
+	// Re-fetch environmentList to ensure we have the latest
 	environmentList = &kuberikv1alpha1.EnvironmentList{}
 	if err := r.List(ctx, environmentList, client.InNamespace(environment.Namespace)); err == nil {
 		for i := range environmentList.Items {
 			env := &environmentList.Items[i]
 			// Check if this environment matches one of our discovered environments
-			// Match by environment name and deployment name
 			if env.Spec.Environment == "" || env.Spec.Name != environment.Spec.Name {
 				continue
 			}
@@ -1225,22 +1227,126 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 				continue
 			}
 
+			// Always sync this environment's history to ensure GitHub deployments and statuses
+			// are up to date with the latest rollout status. This ensures we get the latest bake status.
+			// This applies to both current and related environments - all are synced the same way.
 			// Get the rollout for this environment
 			rollout, err := r.getReferencedRollout(ctx, env)
 			if err != nil {
-				// Skip if we can't get the rollout
 				continue
 			}
 
-			// Extract history entries from the rollout
-			historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0, len(rollout.Status.History))
-			for _, entry := range rollout.Status.History {
-				// Only include entries with valid revision
-				if entry.Version.Revision != nil && *entry.Version.Revision != "" {
-					historyEntries = append(historyEntries, entry)
+			// Sync deployment history to ensure GitHub deployments and statuses match rollout
+			// This updates GitHub deployment statuses when rollout bake status changes
+			_, _, _, err = r.syncDeploymentHistory(ctx, ghClient, env, rollout)
+			if err != nil {
+				continue
+			}
+
+			// Re-fetch deployments after syncing to get the latest status
+			formattedEnv := formatDeploymentEnvironment(deploymentName, envName)
+			task := formatDeploymentTask(deploymentName)
+			envDeploymentsForEnv, _, err := ghClient.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
+				Task:        task,
+				Environment: formattedEnv,
+			})
+			if err != nil {
+				continue
+			}
+			envDeployments[envName] = envDeploymentsForEnv
+
+			if len(envDeploymentsForEnv) == 0 {
+				// No deployments after sync - skip this environment
+				continue
+			}
+
+			// Extract history from GitHub deployment payloads and get latest status
+			// For environments with Environment resources, only include entries that are in the rollout's current history
+			historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
+			seenIDs := make(map[int64]bool) // Avoid duplicates
+
+			// Get rollout history IDs to filter (only for environments with Environment resources)
+			// This ensures we only include history entries that are in the rollout's current history
+			rolloutHistoryIDs := make(map[int64]bool)
+			if rollout != nil {
+				for _, h := range rollout.Status.History {
+					if h.ID != nil {
+						rolloutHistoryIDs[*h.ID] = true
+					}
 				}
 			}
-			envHistory[envName] = historyEntries
+
+			for _, d := range envDeploymentsForEnv {
+				payload := r.extractDeploymentPayload(d)
+				if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
+					continue
+				}
+
+				// Parse ID from payload (stored as string, need to convert to int64)
+				entryID, err := strconv.ParseInt(payload.ID, 10, 64)
+				if err != nil {
+					continue
+				}
+
+				// For environments with Environment resources, only include entries in rollout's current history
+				if len(rolloutHistoryIDs) > 0 && !rolloutHistoryIDs[entryID] {
+					continue
+				}
+
+				// Skip if we've already seen this ID
+				if seenIDs[entryID] {
+					continue
+				}
+
+				// Build DeploymentHistoryEntry from payload (immutable data) + GitHub status (mutable data)
+				entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID:        &entryID,
+					Version:   *payload.Version.DeepCopy(),
+					Timestamp: metav1.Now(), // Default to now, could be improved with deployment.created_at
+				}
+
+				// Get the latest deployment status from GitHub to get bake status
+				// This is the source of truth for deployment status
+				if d.ID != nil {
+					statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
+					if err == nil && len(statuses) > 0 {
+						// Statuses are ordered newest first
+						if statuses[0].State != nil {
+							ghState := *statuses[0].State
+							// Map GitHub status to bake status
+							if ghState == "success" {
+								bakeStatus := kuberikrolloutv1alpha1.BakeStatusSucceeded
+								entry.BakeStatus = &bakeStatus
+							} else if ghState == "failure" || ghState == "error" {
+								bakeStatus := kuberikrolloutv1alpha1.BakeStatusFailed
+								entry.BakeStatus = &bakeStatus
+							} else if ghState == "pending" {
+								bakeStatus := kuberikrolloutv1alpha1.BakeStatusPending
+								entry.BakeStatus = &bakeStatus
+							} else if ghState == "in_progress" {
+								bakeStatus := kuberikrolloutv1alpha1.BakeStatusInProgress
+								entry.BakeStatus = &bakeStatus
+							}
+							// Use GitHub status description for BakeStatusMessage (max 140 chars)
+							if statuses[0].Description != nil {
+								desc := *statuses[0].Description
+								// Truncate to 140 characters if needed
+								if len(desc) > 140 {
+									desc = desc[:140]
+								}
+								entry.BakeStatusMessage = &desc
+							}
+						}
+					}
+				}
+
+				historyEntries = append(historyEntries, entry)
+				seenIDs[entryID] = true
+			}
+
+			if len(historyEntries) > 0 {
+				envHistory[envName] = historyEntries
+			}
 		}
 	}
 
@@ -1248,6 +1354,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	envDeploymentStatuses := make(map[string]map[string]string) // environment -> version -> status
 
 	// For environments without Environment resources, extract history from GitHub deployment payloads
+	// Also process environments that have GitHub deployments but weren't processed above
 	for envName, deployments := range envDeployments {
 		// Skip if we already have history from Environment resource
 		if _, exists := envHistory[envName]; exists {
@@ -1258,26 +1365,75 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 			continue
 		}
 
+		// Skip if no deployments
+		if len(deployments) == 0 {
+			continue
+		}
+
 		// Initialize status map for this environment
 		if envDeploymentStatuses[envName] == nil {
 			envDeploymentStatuses[envName] = make(map[string]string)
 		}
 
-		// Collect history entries from deployment payloads
+		// Collect history entries from deployment payloads + GitHub statuses
 		historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
 		seenIDs := make(map[int64]bool) // Avoid duplicates
 		for _, d := range deployments {
 			payload := r.extractDeploymentPayload(d)
-			if payload != nil && payload.DeploymentHistoryEntry != nil {
-				entry := payload.DeploymentHistoryEntry
-				// Only include entries with valid revision and ID
-				if entry.ID != nil && entry.Version.Revision != nil && *entry.Version.Revision != "" {
-					if !seenIDs[*entry.ID] {
-						historyEntries = append(historyEntries, *entry)
-						seenIDs[*entry.ID] = true
+			if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
+				continue
+			}
+
+			// Parse ID from payload
+			entryID, err := strconv.ParseInt(payload.ID, 10, 64)
+			if err != nil {
+				continue
+			}
+
+			// Skip if we've already seen this ID
+			if seenIDs[entryID] {
+				continue
+			}
+
+			// Build DeploymentHistoryEntry from payload (immutable) + GitHub status (mutable)
+			entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				ID:        &entryID,
+				Version:   *payload.Version.DeepCopy(),
+				Timestamp: metav1.Now(), // Default to now
+			}
+
+			// Get status from GitHub deployment statuses
+			if d.ID != nil {
+				statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
+				if err == nil && len(statuses) > 0 && statuses[0].State != nil {
+					ghState := *statuses[0].State
+					// Map GitHub status to bake status
+					if ghState == "success" {
+						bakeStatus := kuberikrolloutv1alpha1.BakeStatusSucceeded
+						entry.BakeStatus = &bakeStatus
+					} else if ghState == "failure" || ghState == "error" {
+						bakeStatus := kuberikrolloutv1alpha1.BakeStatusFailed
+						entry.BakeStatus = &bakeStatus
+					} else if ghState == "pending" {
+						bakeStatus := kuberikrolloutv1alpha1.BakeStatusPending
+						entry.BakeStatus = &bakeStatus
+					} else if ghState == "in_progress" {
+						bakeStatus := kuberikrolloutv1alpha1.BakeStatusInProgress
+						entry.BakeStatus = &bakeStatus
+					}
+					// Use GitHub status description for BakeStatusMessage (max 140 chars)
+					if statuses[0].Description != nil {
+						desc := *statuses[0].Description
+						if len(desc) > 140 {
+							desc = desc[:140]
+						}
+						entry.BakeStatusMessage = &desc
 					}
 				}
 			}
+
+			historyEntries = append(historyEntries, entry)
+			seenIDs[entryID] = true
 
 			// Also track GitHub deployment status for this version
 			if d.Ref != nil && *d.Ref != "" {
@@ -1450,6 +1606,8 @@ func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironm
 			}
 		}
 
+		// Always update history to ensure we have the latest data from GitHub deployments
+		// The comparison in environmentInfosEqual will detect if it actually changed
 		environmentInfoList = updateEnvironmentInfoWithHistory(environmentInfoList, envName, info.EnvironmentURL, info.Relationship, history)
 	}
 
@@ -1492,7 +1650,8 @@ func updateEnvironmentInfoWithRelationship(infos []kuberikv1alpha1.EnvironmentIn
 }
 
 // updateEnvironmentInfoWithHistory updates or adds an environment info entry with history
-// It always updates history if provided, even if it appears equal, to ensure we have the latest data
+// It always updates history if provided to ensure we have the latest data from rollouts
+// Deep copies history entries to avoid pointer issues and ensure we have fresh data
 func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship, history []kuberikrolloutv1alpha1.DeploymentHistoryEntry) []kuberikv1alpha1.EnvironmentInfo {
 	// Find existing entry
 	for i := range infos {
@@ -1501,18 +1660,25 @@ func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, e
 			infos[i].Relationship = relationship
 			if history != nil {
 				// Always update history if provided to ensure we have the latest data
-				// The comparison in environmentInfosEqual will detect if it actually changed
-				infos[i].History = history
+				// Deep copy the history to avoid pointer issues and ensure fresh data
+				infos[i].History = make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
+				for j := range history {
+					infos[i].History[j] = *history[j].DeepCopy()
+				}
 			}
 			return infos
 		}
 	}
-	// Add new entry
+	// Add new entry - deep copy history
+	historyCopy := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
+	for i := range history {
+		historyCopy[i] = *history[i].DeepCopy()
+	}
 	return append(infos, kuberikv1alpha1.EnvironmentInfo{
 		Environment:    environment,
 		EnvironmentURL: environmentURL,
 		Relationship:   relationship,
-		History:        history,
+		History:        historyCopy,
 	})
 }
 

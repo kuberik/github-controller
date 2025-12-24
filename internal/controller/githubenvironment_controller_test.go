@@ -94,12 +94,14 @@ var _ = Describe("Environment Controller", func() {
 
 	// Helper function to create deployment payload with history entry
 	createDeploymentPayload := func(historyID string, historyEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) ([]byte, error) {
+		// New payload format: only immutable data (ID, Relationship, Version)
 		payload := struct {
-			ID                     string                                         `json:"id"`
-			DeploymentHistoryEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry `json:"deploymentHistoryEntry,omitempty"`
+			ID           string                                   `json:"id"`
+			Relationship *kuberikv1alpha1.EnvironmentRelationship `json:"relationship,omitempty"`
+			Version      *kuberikrolloutv1alpha1.VersionInfo      `json:"version,omitempty"`
 		}{
-			ID:                     historyID,
-			DeploymentHistoryEntry: historyEntry,
+			ID:      historyID,
+			Version: historyEntry.Version.DeepCopy(),
 		}
 		return json.Marshal(payload)
 	}
@@ -2590,6 +2592,220 @@ var _ = Describe("Environment Controller", func() {
 			Expect(len(stagingInfo.History)).To(Equal(1))
 			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
 			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded), "staging history should be updated to Succeeded status")
+			Expect(stagingInfo.History[0].BakeStatusMessage).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatusMessage).To(Equal("Bake completed successfully"))
+		})
+
+		It("Should update existing history entries when their status changes", func() {
+			skipIfNoGitHubToken()
+
+			By("Creating GitHub token secret")
+			Expect(createGitHubTokenSecret()).To(Succeed())
+
+			By("Creating staging Environment and Rollout with initial deployment")
+			stagingRevision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			stagingRollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-staging-update",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), stagingRollout)
+			Expect(k8sClient.Create(context.Background(), stagingRollout)).Should(Succeed())
+
+			// Start with a deployment in Pending status
+			stagingRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(300)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0-staging",
+							Revision: &stagingRevision,
+						},
+						Timestamp:  metav1.Now(),
+						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusPending),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+			stagingEnv := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-staging-env-update",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-staging-update",
+					},
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "kuberik/environment-controller-testing",
+					},
+					Name:        "test-deployment-update-env",
+					Environment: "staging",
+				},
+			}
+			k8sClient.Delete(context.Background(), stagingEnv)
+			Expect(k8sClient.Create(context.Background(), stagingEnv)).Should(Succeed())
+
+			By("Creating production Environment with relationship to staging")
+			productionRevision := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+			productionRollout := &kuberikrolloutv1alpha1.Rollout{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-rollout-production-update",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikrolloutv1alpha1.RolloutSpec{
+					ReleasesImagePolicy: corev1.LocalObjectReference{
+						Name: "test-policy",
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), productionRollout)
+			Expect(k8sClient.Create(context.Background(), productionRollout)).Should(Succeed())
+
+			productionRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+				History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					{
+						ID: k8sptr.To(int64(400)),
+						Version: kuberikrolloutv1alpha1.VersionInfo{
+							Tag:      "v1.0.0",
+							Revision: &productionRevision,
+						},
+						Timestamp: metav1.Now(),
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(context.Background(), productionRollout)).Should(Succeed())
+
+			productionEnv := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-production-env-update",
+					Namespace: DeploymentNamespace,
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					RolloutRef: corev1.LocalObjectReference{
+						Name: "test-rollout-production-update",
+					},
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "kuberik/environment-controller-testing",
+					},
+					Name:        "test-deployment-update-env",
+					Environment: "production",
+					Relationship: &kuberikv1alpha1.EnvironmentRelationship{
+						Environment: "staging",
+						Type:        kuberikv1alpha1.RelationshipTypeAfter,
+					},
+				},
+			}
+			k8sClient.Delete(context.Background(), productionEnv)
+			Expect(k8sClient.Create(context.Background(), productionEnv)).Should(Succeed())
+
+			By("Reconciling production Environment - should see Pending status")
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-production-env-update",
+					Namespace: DeploymentNamespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			// Verify staging history shows Pending
+			updatedProductionEnv := &kuberikv1alpha1.Environment{}
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-production-env-update",
+				Namespace: DeploymentNamespace,
+			}, updatedProductionEnv)).To(Succeed())
+
+			var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(len(stagingInfo.History)).To(Equal(1))
+			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending))
+
+			By("Updating staging rollout status to InProgress")
+			// Re-fetch the rollout to get the latest version
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-rollout-staging-update",
+				Namespace: DeploymentNamespace,
+			}, stagingRollout)).Should(Succeed())
+			stagingRollout.Status.History[0].BakeStatus = k8sptr.To(kuberikrolloutv1alpha1.BakeStatusInProgress)
+			stagingRollout.Status.History[0].BakeStatusMessage = k8sptr.To("Bake in progress")
+			Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+			// Reconcile again - should see InProgress
+			result, err = reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			// Verify staging history was updated to InProgress
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-production-env-update",
+				Namespace: DeploymentNamespace,
+			}, updatedProductionEnv)).To(Succeed())
+
+			stagingInfo = nil
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(len(stagingInfo.History)).To(Equal(1))
+			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusInProgress), "staging history should be updated to InProgress")
+			Expect(stagingInfo.History[0].BakeStatusMessage).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatusMessage).To(Equal("Bake in progress"))
+
+			By("Updating staging rollout status to Succeeded")
+			// Re-fetch the rollout to get the latest version
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-rollout-staging-update",
+				Namespace: DeploymentNamespace,
+			}, stagingRollout)).Should(Succeed())
+			stagingRollout.Status.History[0].BakeStatus = k8sptr.To(kuberikrolloutv1alpha1.BakeStatusSucceeded)
+			stagingRollout.Status.History[0].BakeStatusMessage = k8sptr.To("Bake completed successfully")
+			Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+			// Reconcile again - should see Succeeded
+			result, err = reconciler.Reconcile(context.Background(), req)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+			// Verify staging history was updated to Succeeded
+			Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+				Name:      "test-production-env-update",
+				Namespace: DeploymentNamespace,
+			}, updatedProductionEnv)).To(Succeed())
+
+			stagingInfo = nil
+			for i := range updatedProductionEnv.Status.EnvironmentInfos {
+				if updatedProductionEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedProductionEnv.Status.EnvironmentInfos[i]
+					break
+				}
+			}
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(len(stagingInfo.History)).To(Equal(1))
+			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded), "staging history should be updated to Succeeded")
 			Expect(stagingInfo.History[0].BakeStatusMessage).ToNot(BeNil())
 			Expect(*stagingInfo.History[0].BakeStatusMessage).To(Equal("Bake completed successfully"))
 		})
