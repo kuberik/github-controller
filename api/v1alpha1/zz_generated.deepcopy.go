@@ -21,6 +21,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	apiv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
@@ -75,6 +76,13 @@ func (in *EnvironmentInfo) DeepCopyInto(out *EnvironmentInfo) {
 		in, out := &in.Relationship, &out.Relationship
 		*out = new(EnvironmentRelationship)
 		**out = **in
+	}
+	if in.History != nil {
+		in, out := &in.History, &out.History
+		*out = make([]apiv1alpha1.DeploymentHistoryEntry, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 }
 
@@ -173,13 +181,6 @@ func (in *EnvironmentStatus) DeepCopyInto(out *EnvironmentStatus) {
 		in, out := &in.RolloutGateRef, &out.RolloutGateRef
 		*out = new(v1.LocalObjectReference)
 		**out = **in
-	}
-	if in.DeploymentStatuses != nil {
-		in, out := &in.DeploymentStatuses, &out.DeploymentStatuses
-		*out = make([]EnvironmentStatusEntry, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
 	}
 	if in.EnvironmentInfos != nil {
 		in, out := &in.EnvironmentInfos, &out.EnvironmentInfos

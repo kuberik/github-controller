@@ -117,6 +117,11 @@ type EnvironmentInfo struct {
 	// Relationship defines how this environment relates to another environment
 	// +optional
 	Relationship *EnvironmentRelationship `json:"relationship,omitempty"`
+
+	// History contains deployment history entries for this environment
+	// +listType=atomic
+	// +optional
+	History []kuberikrolloutv1alpha1.DeploymentHistoryEntry `json:"history,omitempty"`
 }
 
 // EnvironmentStatus defines the observed state of Environment.
@@ -140,12 +145,6 @@ type EnvironmentStatus struct {
 	// RolloutGateRef is a reference to the RolloutGate that was created/updated
 	// +optional
 	RolloutGateRef *corev1.LocalObjectReference `json:"rolloutGateRef,omitempty"`
-
-	// DeploymentStatuses tracks deployment statuses per version and environment.
-	// Only versions that are relevant based on environment relationships are tracked.
-	// +listType=atomic
-	// +optional
-	DeploymentStatuses []EnvironmentStatusEntry `json:"deploymentStatuses,omitempty"`
 
 	// EnvironmentInfos tracks deployment information for each environment.
 	// Each environment has environment URL and relationships (not per version).

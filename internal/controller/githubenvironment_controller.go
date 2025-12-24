@@ -117,7 +117,7 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Sync entire rollout history with GitHub deployments and statuses
-	deploymentID, deploymentURL, currentEnvDeployments, err := r.syncDeploymentHistory(ctx, githubClient, deployment, rollout)
+	deploymentID, deploymentURL, _, err := r.syncDeploymentHistory(ctx, githubClient, deployment, rollout)
 	if err != nil {
 		log.Error(err, "Failed to sync deployment history")
 		return ctrl.Result{}, err
@@ -129,7 +129,7 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Update Environment status
-	if err := r.updateEnvironmentStatus(ctx, deployment, deploymentID, deploymentURL, rollout, currentEnvDeployments); err != nil {
+	if err := r.updateEnvironmentStatus(ctx, deployment, deploymentID, deploymentURL, rollout); err != nil {
 		log.Error(err, "Failed to update Environment status")
 		return ctrl.Result{}, err
 	}
@@ -316,7 +316,7 @@ func (r *GitHubEnvironmentReconciler) getCurrentVersionFromRollout(rollout *kube
 }
 
 // updateEnvironmentStatus updates the Environment status with GitHub deployment information
-func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Context, environment *kuberikv1alpha1.Environment, deploymentID *int64, deploymentURL string, rollout *kuberikrolloutv1alpha1.Rollout, currentEnvDeployments map[string]versionDeploymentInfo) error {
+func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Context, environment *kuberikv1alpha1.Environment, deploymentID *int64, deploymentURL string, rollout *kuberikrolloutv1alpha1.Rollout) error {
 	needsUpdate := false
 
 	// Update deployment ID
@@ -338,49 +338,46 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 		needsUpdate = true
 	}
 
-	// Update deployment statuses for current environment
-	// Only keep versions that are still in history
-	if environment.Status.DeploymentStatuses == nil {
-		environment.Status.DeploymentStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
-	}
-
+	// Update history for current environment from rollout
 	currentEnv := environment.Spec.Environment
 
-	// Build set of versions that should be kept (only those in history)
-	versionsInHistory := make(map[string]bool)
-	for _, h := range rollout.Status.History {
-		if h.Version.Revision != nil && *h.Version.Revision != "" {
-			versionsInHistory[*h.Version.Revision] = true
+	// Build history entries for current environment from rollout
+	newHistory := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0, len(rollout.Status.History))
+	for _, entry := range rollout.Status.History {
+		// Only include entries with valid revision
+		if entry.Version.Revision != nil && *entry.Version.Revision != "" {
+			newHistory = append(newHistory, entry)
 		}
 	}
 
-	// Sync deployment statuses for current environment
-	statusMap := newDeploymentStatusMap(environment.Status.DeploymentStatuses)
+	// Update or create EnvironmentInfo for current environment with history
+	if environment.Status.EnvironmentInfos == nil {
+		environment.Status.EnvironmentInfos = []kuberikv1alpha1.EnvironmentInfo{}
+	}
 
-	// Remove entries for current environment that are no longer in history
-	statusMap.remove(func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
-		if entry.Environment != currentEnv {
-			return false
-		}
-		version := ""
-		if entry.Version.Revision != nil {
-			version = *entry.Version.Revision
-		}
-		return !versionsInHistory[version]
-	})
-
-	// Update or add statuses for versions in history
-	for version, depInfo := range currentEnvDeployments {
-		if versionsInHistory[version] && depInfo.HistoryEntry != nil {
-			statusMap.set(currentEnv, depInfo.HistoryEntry)
+	// Find or create EnvironmentInfo for current environment
+	envInfoIndex := -1
+	for i, info := range environment.Status.EnvironmentInfos {
+		if info.Environment == currentEnv {
+			envInfoIndex = i
+			break
 		}
 	}
 
-	// Check if update is needed
-	statuses := statusMap.toSlice()
-	if !statusMap.equal(environment.Status.DeploymentStatuses) {
-		environment.Status.DeploymentStatuses = statuses
+	if envInfoIndex == -1 {
+		// Create new EnvironmentInfo
+		environment.Status.EnvironmentInfos = append(environment.Status.EnvironmentInfos, kuberikv1alpha1.EnvironmentInfo{
+			Environment: currentEnv,
+			History:     newHistory,
+		})
 		needsUpdate = true
+	} else {
+		// Update existing EnvironmentInfo
+		envInfo := &environment.Status.EnvironmentInfos[envInfoIndex]
+		if !historyEntriesEqual(envInfo.History, newHistory) {
+			envInfo.History = newHistory
+			needsUpdate = true
+		}
 	}
 
 	if needsUpdate {
@@ -1030,15 +1027,19 @@ type relationshipGraphData struct {
 	relevantEnvironments map[string]bool
 	relevantVersions     map[string]bool
 	envDeployments       map[string][]*github.Deployment
-	allEnvDeployments    map[string]map[string]versionDeploymentInfo
-	environmentInfos     map[string]struct {
+	// envHistory maps environment name -> history entries from that environment's rollout
+	envHistory map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry
+	// envDeploymentStatuses maps environment name -> version -> GitHub deployment status ("success", "failure", etc.)
+	envDeploymentStatuses map[string]map[string]string
+	environmentInfos      map[string]struct {
 		EnvironmentURL string
 		Relationship   *kuberikv1alpha1.EnvironmentRelationship
 	}
 }
 
 // buildRelationshipGraph discovers all environments and builds the relationship graph
-func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context, environment *kuberikv1alpha1.Environment, client *github.Client) (*relationshipGraphData, error) {
+// It first updates environment infos, then fetches history from rollouts for each environment
+func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context, environment *kuberikv1alpha1.Environment, ghClient *github.Client) (*relationshipGraphData, error) {
 	owner, repo, err := parseProject(environment.Spec.Backend.Project)
 	if err != nil {
 		return nil, err
@@ -1058,7 +1059,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 
 	// Query all deployments with the same task to discover all environments
 	task := formatDeploymentTask(deploymentName)
-	allDeployments, _, err := client.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
+	allDeployments, _, err := ghClient.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 		Task: task,
 	})
 	if err != nil {
@@ -1112,36 +1113,16 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	}
 	traverseRelationships(currentEnv)
 
-	// Build set of relevant versions: versions that appear in any relevant environment
-	relevantVersions := make(map[string]bool)
-	for envName, deployments := range envDeployments {
-		if !relevantEnvironments[envName] {
-			continue
-		}
-		for _, d := range deployments {
-			if d.Ref != nil && *d.Ref != "" {
-				relevantVersions[*d.Ref] = true
-			}
-		}
-	}
-
-	// Track deployment statuses for all environments
-	allEnvDeployments := make(map[string]map[string]versionDeploymentInfo) // environment -> version -> deployment info
 	// Track environment info (environment URL and relationship) for all environments
 	environmentInfos := make(map[string]struct {
 		EnvironmentURL string
 		Relationship   *kuberikv1alpha1.EnvironmentRelationship
 	})
 
-	// Process each environment
+	// First, update environment infos from GitHub deployments
 	for envName, deployments := range envDeployments {
 		if len(deployments) == 0 {
 			continue
-		}
-
-		// Initialize deployment map for this environment
-		if allEnvDeployments[envName] == nil {
-			allEnvDeployments[envName] = make(map[string]versionDeploymentInfo)
 		}
 
 		// Track the latest environment URL and relationship (first deployment in list is latest)
@@ -1158,7 +1139,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 
 		// Extract environment URL from the latest deployment's statuses
-		statuses, _, err := client.Repositories.ListDeploymentStatuses(ctx, owner, repo, latestDeployment.GetID(), nil)
+		statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, latestDeployment.GetID(), nil)
 		if err == nil && len(statuses) > 0 {
 			// Statuses are ordered newest first, so the first one has the latest environment URL
 			if statuses[0].EnvironmentURL != nil && *statuses[0].EnvironmentURL != "" {
@@ -1167,59 +1148,115 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 
 		environmentInfos[envName] = envInfo
+	}
 
-		// Check each deployment for success status
-		for _, d := range deployments {
-			if d.Ref == nil {
+	// Now fetch history from rollouts for each environment
+	// First, try to get history from Environment resources (most accurate)
+	envHistory := make(map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
+	environmentList := &kuberikv1alpha1.EnvironmentList{}
+	if err := r.List(ctx, environmentList, client.InNamespace(environment.Namespace)); err == nil {
+		for i := range environmentList.Items {
+			env := &environmentList.Items[i]
+			// Check if this environment matches one of our discovered environments
+			// Match by environment name and deployment name
+			if env.Spec.Environment == "" || env.Spec.Name != environment.Spec.Name {
 				continue
 			}
-			version := *d.Ref
-
-			// Only track versions that are relevant
-			if !relevantVersions[version] {
+			envName := env.Spec.Environment
+			if !relevantEnvironments[envName] {
 				continue
 			}
 
-			// Get deployment statuses
-			statuses, _, err := client.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
+			// Get the rollout for this environment
+			rollout, err := r.getReferencedRollout(ctx, env)
 			if err != nil {
+				// Skip if we can't get the rollout
 				continue
 			}
 
-			// Get the latest status (statuses are ordered newest first)
-			latestStatus := "pending" // Default
-			for _, status := range statuses {
-				if status.State != nil {
-					latestStatus = *status.State
-					break
+			// Extract history entries from the rollout
+			historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0, len(rollout.Status.History))
+			for _, entry := range rollout.Status.History {
+				// Only include entries with valid revision
+				if entry.Version.Revision != nil && *entry.Version.Revision != "" {
+					historyEntries = append(historyEntries, entry)
+				}
+			}
+			envHistory[envName] = historyEntries
+		}
+	}
+
+	// Track deployment statuses from GitHub for environments without Environment resources
+	envDeploymentStatuses := make(map[string]map[string]string) // environment -> version -> status
+
+	// For environments without Environment resources, extract history from GitHub deployment payloads
+	for envName, deployments := range envDeployments {
+		// Skip if we already have history from Environment resource
+		if _, exists := envHistory[envName]; exists {
+			continue
+		}
+		// Only process relevant environments
+		if !relevantEnvironments[envName] {
+			continue
+		}
+
+		// Initialize status map for this environment
+		if envDeploymentStatuses[envName] == nil {
+			envDeploymentStatuses[envName] = make(map[string]string)
+		}
+
+		// Collect history entries from deployment payloads
+		historyEntries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0)
+		seenIDs := make(map[int64]bool) // Avoid duplicates
+		for _, d := range deployments {
+			payload := r.extractDeploymentPayload(d)
+			if payload != nil && payload.DeploymentHistoryEntry != nil {
+				entry := payload.DeploymentHistoryEntry
+				// Only include entries with valid revision and ID
+				if entry.ID != nil && entry.Version.Revision != nil && *entry.Version.Revision != "" {
+					if !seenIDs[*entry.ID] {
+						historyEntries = append(historyEntries, *entry)
+						seenIDs[*entry.ID] = true
+					}
 				}
 			}
 
-			// Extract deployment history entry from payload
-			var historyEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry
-			payload := r.extractDeploymentPayload(d)
-			if payload != nil && payload.DeploymentHistoryEntry != nil {
-				historyEntry = payload.DeploymentHistoryEntry
+			// Also track GitHub deployment status for this version
+			if d.Ref != nil && *d.Ref != "" {
+				statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), nil)
+				if err == nil && len(statuses) > 0 {
+					// Statuses are ordered newest first
+					if statuses[0].State != nil {
+						envDeploymentStatuses[envName][*d.Ref] = *statuses[0].State
+					}
+				}
 			}
-			// If no history entry in payload, we skip tracking this deployment
-			// as we need the full history entry to properly represent it
+		}
+		if len(historyEntries) > 0 {
+			envHistory[envName] = historyEntries
+		}
+	}
 
-			// Track this version's deployment info (without URL for non-current environments)
-			allEnvDeployments[envName][version] = versionDeploymentInfo{
-				Status:       latestStatus,
-				DeploymentID: d.ID,
-				HistoryEntry: historyEntry,
-				// DeploymentURL is only set for current environment in updateDeploymentStatus
+	// Build set of relevant versions: versions that appear in any relevant environment's history
+	relevantVersions := make(map[string]bool)
+	for envName, history := range envHistory {
+		if !relevantEnvironments[envName] {
+			continue
+		}
+		for _, entry := range history {
+			if entry.Version.Revision != nil && *entry.Version.Revision != "" {
+				relevantVersions[*entry.Version.Revision] = true
 			}
 		}
 	}
 
 	return &relationshipGraphData{
-		relevantEnvironments: relevantEnvironments,
-		relevantVersions:     relevantVersions,
-		envDeployments:       envDeployments,
-		allEnvDeployments:    allEnvDeployments,
-		environmentInfos:     environmentInfos,
+		relevantEnvironments:  relevantEnvironments,
+		relevantVersions:      relevantVersions,
+		envDeployments:        envDeployments,
+		envHistory:            envHistory,
+		envDeploymentStatuses: envDeploymentStatuses,
+		environmentInfos:      environmentInfos,
 	}, nil
 }
 
@@ -1246,16 +1283,32 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 	allowedTags := []string{}
 	seenTags := make(map[string]bool) // Avoid duplicates
 
-	// Find allowed versions from related environment deployments
+	// Find allowed versions from related environment history
 	if environment.Spec.Relationship != nil {
 		relatedEnv := environment.Spec.Relationship.Environment
-		// Check if related environment has deployments
-		if relatedEnvDeployments, exists := graphData.allEnvDeployments[relatedEnv]; exists {
-			for version, depInfo := range relatedEnvDeployments {
-				// Check if deployment status is success
-				if depInfo.Status == "success" {
+		// Check if related environment has history
+		if relatedEnvHistory, exists := graphData.envHistory[relatedEnv]; exists {
+			for _, entry := range relatedEnvHistory {
+				if entry.Version.Revision == nil || *entry.Version.Revision == "" {
+					continue
+				}
+				revision := *entry.Version.Revision
+
+				// Check if bake status is succeeded (for entries from rollouts)
+				bakeSucceeded := entry.BakeStatus != nil && *entry.BakeStatus == kuberikrolloutv1alpha1.BakeStatusSucceeded
+
+				// For entries from GitHub deployments (without bake status), check GitHub deployment status
+				if !bakeSucceeded && graphData.envDeploymentStatuses != nil {
+					if envStatuses, exists := graphData.envDeploymentStatuses[relatedEnv]; exists {
+						if status, exists := envStatuses[revision]; exists && status == "success" {
+							bakeSucceeded = true
+						}
+					}
+				}
+
+				if bakeSucceeded {
 					// Match revision to tag in releaseCandidates
-					if tag, found := revisionToTag[version]; found {
+					if tag, found := revisionToTag[revision]; found {
 						// Only add if not already seen
 						if !seenTags[tag] {
 							allowedTags = append(allowedTags, tag)
@@ -1308,69 +1361,32 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 	return nil
 }
 
-// updateDeploymentStatusesForRelatedEnvironments updates deployment statuses for all related environments
+// updateDeploymentStatusesForRelatedEnvironments updates history for all related environments
 func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironments(ctx context.Context, environment *kuberikv1alpha1.Environment, graphData *relationshipGraphData) error {
-	currentEnv := environment.Spec.Environment
-
-	// Update deployment statuses for all environments in Environment status
-	if environment.Status.DeploymentStatuses == nil {
-		environment.Status.DeploymentStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
-	}
-
 	needsStatusUpdate := false
 
-	// Sync deployment statuses for all environments
-	statusMap := newDeploymentStatusMap(environment.Status.DeploymentStatuses)
-
-	// Update statuses for each environment (excluding current environment, which is handled separately)
-	// Process all environments in allEnvDeployments - they already contain only relevant versions
-	for envName, envDeployments := range graphData.allEnvDeployments {
-		// Skip current environment (handled separately in updateDeploymentStatus)
-		if envName == currentEnv {
-			continue
-		}
-
-		// Only track statuses for relevant environments
-		if !graphData.relevantEnvironments[envName] {
-			continue
-		}
-
-		// Add/update statuses for all versions in this environment
-		// Note: allEnvDeployments already only contains relevant versions
-		for _, depInfo := range envDeployments {
-			// Only set if we have a history entry
-			if depInfo.HistoryEntry != nil {
-				statusMap.set(envName, depInfo.HistoryEntry)
-			}
-		}
-	}
-
-	// Clean up: remove entries for environments that are no longer relevant or versions that are no longer relevant
-	statusMap.remove(func(entry kuberikv1alpha1.EnvironmentStatusEntry) bool {
-		// Keep current environment entries (handled separately in updateDeploymentStatus)
-		if entry.Environment == currentEnv {
-			return false
-		}
-		// Remove if environment is no longer relevant
-		if !graphData.relevantEnvironments[entry.Environment] {
-			return true
-		}
-		// Remove if version is no longer relevant
-		version := ""
-		if entry.Version.Revision != nil {
-			version = *entry.Version.Revision
-		}
-		return !graphData.relevantVersions[version]
-	})
-
-	// Update environment infos (URLs and relationships for all environments)
+	// Update environment infos (URLs, relationships, and history for all environments)
 	if environment.Status.EnvironmentInfos == nil {
 		environment.Status.EnvironmentInfos = []kuberikv1alpha1.EnvironmentInfo{}
 	}
 
 	environmentInfoList := environment.Status.EnvironmentInfos
+
+	// Update or add environment infos with history from graphData
 	for envName, info := range graphData.environmentInfos {
-		environmentInfoList = updateEnvironmentInfoWithRelationship(environmentInfoList, envName, info.EnvironmentURL, info.Relationship)
+		// Get history for this environment
+		history := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{}
+		if envHistory, exists := graphData.envHistory[envName]; exists {
+			// Filter history to only include relevant versions
+			for _, entry := range envHistory {
+				if entry.Version.Revision != nil && *entry.Version.Revision != "" {
+					if graphData.relevantVersions[*entry.Version.Revision] {
+						history = append(history, entry)
+					}
+				}
+			}
+		}
+		environmentInfoList = updateEnvironmentInfoWithHistory(environmentInfoList, envName, info.EnvironmentURL, info.Relationship, history)
 	}
 
 	// Clean up environment infos for environments that are no longer relevant
@@ -1381,15 +1397,6 @@ func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironm
 	// Check if environment infos need update
 	if !environmentInfosEqual(environment.Status.EnvironmentInfos, environmentInfoList) {
 		environment.Status.EnvironmentInfos = environmentInfoList
-		needsStatusUpdate = true
-	}
-
-	// Check if statuses need update
-	statuses := statusMap.toSlice()
-	// Always update if the content is different
-	// Compare lengths first as a fast path, then do detailed comparison
-	if len(statuses) != len(environment.Status.DeploymentStatuses) || !statusMap.equal(environment.Status.DeploymentStatuses) {
-		environment.Status.DeploymentStatuses = statuses
 		needsStatusUpdate = true
 	}
 
@@ -1415,104 +1422,24 @@ func (r *GitHubEnvironmentReconciler) slicesEqual(a, b []string) bool {
 	return true
 }
 
-// deploymentStatusMap is a helper type for managing deployment statuses using a map for efficient lookups
-type deploymentStatusMap struct {
-	entries map[string]kuberikv1alpha1.EnvironmentStatusEntry // key: "environment:version"
-}
-
-// newDeploymentStatusMap creates a new deployment status map from a slice
-func newDeploymentStatusMap(statuses []kuberikv1alpha1.EnvironmentStatusEntry) *deploymentStatusMap {
-	m := &deploymentStatusMap{
-		entries: make(map[string]kuberikv1alpha1.EnvironmentStatusEntry),
-	}
-	for _, entry := range statuses {
-		version := ""
-		if entry.Version.Revision != nil {
-			version = *entry.Version.Revision
-		}
-		key := entry.Environment + ":" + version
-		m.entries[key] = entry
-	}
-	return m
-}
-
-// set updates or adds a deployment status entry
-func (m *deploymentStatusMap) set(environment string, historyEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) {
-	version := ""
-	if historyEntry.Version.Revision != nil {
-		version = *historyEntry.Version.Revision
-	}
-	key := environment + ":" + version
-	// Create a copy of the history entry to avoid pointer issues
-	historyEntryCopy := *historyEntry
-	m.entries[key] = kuberikv1alpha1.EnvironmentStatusEntry{
-		Environment:            environment,
-		DeploymentHistoryEntry: historyEntryCopy,
-	}
-}
-
-// remove removes entries matching the filter function
-func (m *deploymentStatusMap) remove(shouldRemove func(kuberikv1alpha1.EnvironmentStatusEntry) bool) {
-	for key, entry := range m.entries {
-		if shouldRemove(entry) {
-			delete(m.entries, key)
-		}
-	}
-}
-
-// toSlice converts the map to a slice
-func (m *deploymentStatusMap) toSlice() []kuberikv1alpha1.EnvironmentStatusEntry {
-	result := make([]kuberikv1alpha1.EnvironmentStatusEntry, 0, len(m.entries))
-	for _, entry := range m.entries {
-		result = append(result, entry)
-	}
-	return result
-}
-
-// equal compares this map with a slice for equality (compares the embedded DeploymentHistoryEntry)
-func (m *deploymentStatusMap) equal(other []kuberikv1alpha1.EnvironmentStatusEntry) bool {
-	if len(m.entries) != len(other) {
-		return false
-	}
-	otherMap := make(map[string]kuberikv1alpha1.EnvironmentStatusEntry)
-	for _, entry := range other {
-		version := ""
-		if entry.Version.Revision != nil {
-			version = *entry.Version.Revision
-		}
-		key := entry.Environment + ":" + version
-		otherMap[key] = entry
-	}
-	if len(m.entries) != len(otherMap) {
-		return false
-	}
-	for key, entry := range m.entries {
-		otherEntry, exists := otherMap[key]
-		if !exists {
-			return false
-		}
-		// Compare the embedded DeploymentHistoryEntry by comparing IDs
-		if (entry.ID == nil) != (otherEntry.ID == nil) {
-			return false
-		}
-		if entry.ID != nil && otherEntry.ID != nil && *entry.ID != *otherEntry.ID {
-			return false
-		}
-		// Also compare environment to be safe
-		if entry.Environment != otherEntry.Environment {
-			return false
-		}
-	}
-	return true
-}
-
 // updateEnvironmentInfoWithRelationship updates or adds an environment info entry
 func updateEnvironmentInfoWithRelationship(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship) []kuberikv1alpha1.EnvironmentInfo {
+	return updateEnvironmentInfoWithHistory(infos, environment, environmentURL, relationship, nil)
+}
+
+// updateEnvironmentInfoWithHistory updates or adds an environment info entry with history
+func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship, history []kuberikrolloutv1alpha1.DeploymentHistoryEntry) []kuberikv1alpha1.EnvironmentInfo {
 	// Find existing entry
 	for i := range infos {
 		if infos[i].Environment == environment {
 			infos[i].EnvironmentURL = environmentURL
 			infos[i].Relationship = relationship
+			if history != nil {
+				// Only update history if provided and different
+				if !historyEntriesEqual(infos[i].History, history) {
+					infos[i].History = history
+				}
+			}
 			return infos
 		}
 	}
@@ -1521,6 +1448,7 @@ func updateEnvironmentInfoWithRelationship(infos []kuberikv1alpha1.EnvironmentIn
 		Environment:    environment,
 		EnvironmentURL: environmentURL,
 		Relationship:   relationship,
+		History:        history,
 	})
 }
 
@@ -1535,54 +1463,105 @@ func removeEnvironmentInfos(infos []kuberikv1alpha1.EnvironmentInfo, shouldRemov
 	return result
 }
 
+// historyEntriesEqual compares two DeploymentHistoryEntry slices for equality
+func historyEntriesEqual(a, b []kuberikrolloutv1alpha1.DeploymentHistoryEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Create maps for easier comparison: key is "revision"
+	aMap := make(map[string]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
+	bMap := make(map[string]kuberikrolloutv1alpha1.DeploymentHistoryEntry)
+
+	for _, entry := range a {
+		revision := ""
+		if entry.Version.Revision != nil {
+			revision = *entry.Version.Revision
+		}
+		if revision != "" {
+			aMap[revision] = entry
+		}
+	}
+
+	for _, entry := range b {
+		revision := ""
+		if entry.Version.Revision != nil {
+			revision = *entry.Version.Revision
+		}
+		if revision != "" {
+			bMap[revision] = entry
+		}
+	}
+
+	if len(aMap) != len(bMap) {
+		return false
+	}
+
+	// Compare entries by ID (which uniquely identifies a history entry)
+	for key, aEntry := range aMap {
+		bEntry, exists := bMap[key]
+		if !exists {
+			return false
+		}
+		// Compare by ID
+		if (aEntry.ID == nil) != (bEntry.ID == nil) {
+			return false
+		}
+		if aEntry.ID != nil && bEntry.ID != nil && *aEntry.ID != *bEntry.ID {
+			return false
+		}
+		// Also compare bake status to ensure we catch status updates
+		if (aEntry.BakeStatus == nil) != (bEntry.BakeStatus == nil) {
+			return false
+		}
+		if aEntry.BakeStatus != nil && bEntry.BakeStatus != nil && *aEntry.BakeStatus != *bEntry.BakeStatus {
+			return false
+		}
+	}
+
+	return true
+}
+
 // environmentInfosEqual compares two environment info lists for equality
 func environmentInfosEqual(a, b []kuberikv1alpha1.EnvironmentInfo) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	// Create maps for easier comparison
-	aMap := make(map[string]struct {
-		EnvironmentURL string
-		Relationship   *kuberikv1alpha1.EnvironmentRelationship
-	})
-	bMap := make(map[string]struct {
-		EnvironmentURL string
-		Relationship   *kuberikv1alpha1.EnvironmentRelationship
-	})
+	aMap := make(map[string]kuberikv1alpha1.EnvironmentInfo)
+	bMap := make(map[string]kuberikv1alpha1.EnvironmentInfo)
 	for _, entry := range a {
-		aMap[entry.Environment] = struct {
-			EnvironmentURL string
-			Relationship   *kuberikv1alpha1.EnvironmentRelationship
-		}{entry.EnvironmentURL, entry.Relationship}
+		aMap[entry.Environment] = entry
 	}
 	for _, entry := range b {
-		bMap[entry.Environment] = struct {
-			EnvironmentURL string
-			Relationship   *kuberikv1alpha1.EnvironmentRelationship
-		}{entry.EnvironmentURL, entry.Relationship}
+		bMap[entry.Environment] = entry
 	}
 	if len(aMap) != len(bMap) {
 		return false
 	}
-	for k, v := range aMap {
-		bv, exists := bMap[k]
+	for k, aEntry := range aMap {
+		bEntry, exists := bMap[k]
 		if !exists {
 			return false
 		}
-		if v.EnvironmentURL != bv.EnvironmentURL {
+		if aEntry.EnvironmentURL != bEntry.EnvironmentURL {
 			return false
 		}
 		// Compare relationships
-		if (v.Relationship == nil) != (bv.Relationship == nil) {
+		if (aEntry.Relationship == nil) != (bEntry.Relationship == nil) {
 			return false
 		}
-		if v.Relationship != nil && bv.Relationship != nil {
-			if v.Relationship.Environment != bv.Relationship.Environment {
+		if aEntry.Relationship != nil && bEntry.Relationship != nil {
+			if aEntry.Relationship.Environment != bEntry.Relationship.Environment {
 				return false
 			}
-			if v.Relationship.Type != bv.Relationship.Type {
+			if aEntry.Relationship.Type != bEntry.Relationship.Type {
 				return false
 			}
+		}
+		// Compare history
+		if !historyEntriesEqual(aEntry.History, bEntry.History) {
+			return false
 		}
 	}
 	return true

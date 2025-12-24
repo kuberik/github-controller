@@ -1767,27 +1767,28 @@ var _ = Describe("Environment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			// Should have status entries for both versions in history
-			Expect(updatedDeployment.Status.DeploymentStatuses).ToNot(BeEmpty())
-
-			// Find status entries for production environment
-			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			// Should have environment info with history for production
+			Expect(updatedDeployment.Status.EnvironmentInfos).ToNot(BeEmpty())
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(productionInfo.History).ToNot(BeEmpty())
 
-			// Should have statuses for both revisions
-			Expect(len(productionStatuses)).To(BeNumerically(">=", 2))
+			// Should have history for both revisions
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 2))
 
 			// Verify both revisions are tracked
 			revisionsFound := make(map[string]bool)
-			for _, status := range productionStatuses {
-				if status.Version.Revision != nil {
-					revisionsFound[*status.Version.Revision] = true
+			for _, entry := range productionInfo.History {
+				if entry.Version.Revision != nil {
+					revisionsFound[*entry.Version.Revision] = true
 				}
-				Expect(status.ID).ToNot(BeNil())
+				Expect(entry.ID).ToNot(BeNil())
 			}
 			Expect(revisionsFound[revision1]).To(BeTrue())
 			Expect(revisionsFound[revision2]).To(BeTrue())
@@ -1920,22 +1921,25 @@ var _ = Describe("Environment Controller", func() {
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for staging environment (related environment)
-			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "staging" {
-					stagingStatuses = append(stagingStatuses, status)
+			var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(stagingInfo.History).ToNot(BeEmpty())
 
 			// Should track staging version since it's related
-			Expect(len(stagingStatuses)).To(BeNumerically(">=", 1))
+			Expect(len(stagingInfo.History)).To(BeNumerically(">=", 1))
 
 			// Verify staging version is tracked
 			stagingVersionFound := false
-			for _, status := range stagingStatuses {
-				if status.Version.Revision != nil && *status.Version.Revision == stagingRef {
+			for _, entry := range stagingInfo.History {
+				if entry.Version.Revision != nil && *entry.Version.Revision == stagingRef {
 					stagingVersionFound = true
-					Expect(status.ID).ToNot(BeNil())
+					Expect(entry.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -2018,19 +2022,21 @@ var _ = Describe("Environment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(productionStatuses)).To(BeNumerically(">=", 1))
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 1))
 
 			revision1Found := false
-			for _, status := range productionStatuses {
-				if status.Version.Revision != nil && *status.Version.Revision == revision1 {
+			for _, entry := range productionInfo.History {
+				if entry.Version.Revision != nil && *entry.Version.Revision == revision1 {
 					revision1Found = true
-					Expect(status.ID).ToNot(BeNil())
+					Expect(entry.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -2070,18 +2076,21 @@ var _ = Describe("Environment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			// Get updated production info
+			productionInfo = nil
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(productionStatuses)).To(BeNumerically(">=", 2))
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 2))
 
 			revisionsFound := make(map[string]bool)
-			for _, status := range productionStatuses {
-				if status.Version.Revision != nil {
-					revisionsFound[*status.Version.Revision] = true
+			for _, entry := range productionInfo.History {
+				if entry.Version.Revision != nil {
+					revisionsFound[*entry.Version.Revision] = true
 				}
 			}
 			Expect(revisionsFound[revision1]).To(BeTrue())
@@ -2175,13 +2184,15 @@ var _ = Describe("Environment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(productionStatuses)).To(BeNumerically(">=", 2))
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 2))
 
 			By("Removing revision1 from history")
 			rollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
@@ -2208,22 +2219,25 @@ var _ = Describe("Environment Controller", func() {
 				Namespace: DeploymentNamespace,
 			}, updatedDeployment)).To(Succeed())
 
-			productionStatuses = []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			// Get updated production info
+			productionInfo = nil
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
+			Expect(productionInfo).ToNot(BeNil())
 
 			// Should only have revision2 now
 			revisionsFound := make(map[string]bool)
-			for _, status := range productionStatuses {
-				if status.Version.Revision != nil {
-					revisionsFound[*status.Version.Revision] = true
+			for _, entry := range productionInfo.History {
+				if entry.Version.Revision != nil {
+					revisionsFound[*entry.Version.Revision] = true
 				}
 			}
 			Expect(revisionsFound[revision2]).To(BeTrue())
-			Expect(revisionsFound[revision1]).To(BeFalse(), "revision1 should be removed from DeploymentStatuses")
+			Expect(revisionsFound[revision1]).To(BeFalse(), "revision1 should be removed from History")
 		})
 
 		It("Should update DeploymentStatuses for related environments based on relationships", func() {
@@ -2352,29 +2366,34 @@ var _ = Describe("Environment Controller", func() {
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for production (current environment)
-			productionStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "production" {
-					productionStatuses = append(productionStatuses, status)
+			var productionInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "production" {
+					productionInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(productionStatuses)).To(BeNumerically(">=", 1))
+			Expect(productionInfo).ToNot(BeNil())
+			Expect(len(productionInfo.History)).To(BeNumerically(">=", 1))
 
 			// Should have status entries for staging (related environment)
-			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "staging" {
-					stagingStatuses = append(stagingStatuses, status)
+			var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(stagingStatuses)).To(BeNumerically(">=", 1))
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(stagingInfo.History).ToNot(BeEmpty())
+			Expect(len(stagingInfo.History)).To(BeNumerically(">=", 1))
 
 			// Verify staging status entry has correct information
 			stagingVersionFound := false
-			for _, status := range stagingStatuses {
-				if status.Version.Revision != nil && *status.Version.Revision == stagingRef {
+			for _, entry := range stagingInfo.History {
+				if entry.Version.Revision != nil && *entry.Version.Revision == stagingRef {
 					stagingVersionFound = true
-					Expect(status.ID).ToNot(BeNil())
+					Expect(entry.ID).ToNot(BeNil())
 					break
 				}
 			}
@@ -2525,22 +2544,28 @@ var _ = Describe("Environment Controller", func() {
 			}, updatedDeployment)).To(Succeed())
 
 			// Should have status entries for staging (related)
-			stagingStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "staging" {
-					stagingStatuses = append(stagingStatuses, status)
+			var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "staging" {
+					stagingInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(stagingStatuses)).To(BeNumerically(">=", 1))
+			Expect(stagingInfo).ToNot(BeNil())
+			Expect(stagingInfo.History).ToNot(BeEmpty())
+			Expect(len(stagingInfo.History)).To(BeNumerically(">=", 1))
 
 			// Should NOT have status entries for qa (unrelated)
-			qaStatuses := []kuberikv1alpha1.EnvironmentStatusEntry{}
-			for _, status := range updatedDeployment.Status.DeploymentStatuses {
-				if status.Environment == "qa" {
-					qaStatuses = append(qaStatuses, status)
+			var qaInfo *kuberikv1alpha1.EnvironmentInfo
+			for i := range updatedDeployment.Status.EnvironmentInfos {
+				if updatedDeployment.Status.EnvironmentInfos[i].Environment == "qa" {
+					qaInfo = &updatedDeployment.Status.EnvironmentInfos[i]
+					break
 				}
 			}
-			Expect(len(qaStatuses)).To(Equal(0), "qa environment should not be tracked as it's not related")
+			if qaInfo != nil {
+				Expect(len(qaInfo.History)).To(Equal(0), "qa environment should not be tracked as it's not related")
+			}
 		})
 	})
 })

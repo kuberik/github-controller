@@ -191,96 +191,6 @@ spec:
                 description: DeploymentID is the ID of the deployment (backend-specific)
                 format: int64
                 type: integer
-              deploymentStatuses:
-                description: |-
-                  DeploymentStatuses tracks deployment statuses per version and environment.
-                  Only versions that are relevant based on environment relationships are tracked.
-                items:
-                  description: EnvironmentStatusEntry represents a deployment status
-                    for a specific version in an environment.
-                  properties:
-                    bakeEndTime:
-                      description: |-
-                        BakeEndTime is the time when the bake period ended for this deployment
-                        This is when the bake process completed (either successfully or with failure).
-                      format: date-time
-                      type: string
-                    bakeStartTime:
-                      description: |-
-                        BakeStartTime is the time when the bake period started for this deployment
-                        This is when the rollout controller began monitoring the deployment for stability.
-                      format: date-time
-                      type: string
-                    bakeStatus:
-                      description: |-
-                        BakeStatus tracks the bake state for this deployment (e.g., None, InProgress, Succeeded, Failed, Cancelled)
-                        The bake process ensures that the deployment is stable and healthy before marking as successful.
-                      type: string
-                    bakeStatusMessage:
-                      description: |-
-                        BakeStatusMessage provides details about the bake state for this deployment
-                        This field contains human-readable information about why the bake status is what it is.
-                      type: string
-                    deployTime:
-                      description: |-
-                        DeployTime is the time when the deployment occurred
-                        This is when the rollout controller initiated the deployment.
-                      format: date-time
-                      type: string
-                    environment:
-                      description: Environment is the environment name (e.g., "production",
-                        "staging")
-                      type: string
-                    id:
-                      description: ID is a unique auto-incrementing identifier for
-                        this history entry.
-                      format: int64
-                      type: integer
-                    message:
-                      description: |-
-                        Message provides a descriptive message about this deployment entry
-                        This field contains human-readable information about the deployment context.
-                        For automatic deployments, it includes information about gate bypass and failed bake unblock.
-                        For manual deployments (when wantedVersion is specified), it can contain a custom message
-                        provided via the "rollout.kuberik.com/deployment-message" annotation, or defaults to "Manual deployment".
-                      type: string
-                    timestamp:
-                      description: Timestamp is the time when the deployment occurred.
-                      format: date-time
-                      type: string
-                    version:
-                      description: Version is the version information that was deployed.
-                      properties:
-                        created:
-                          description: Created is the creation timestamp extracted
-                            from OCI annotations if available.
-                          format: date-time
-                          type: string
-                        digest:
-                          description: Digest is the image digest if available from
-                            the ImagePolicy.
-                          type: string
-                        revision:
-                          description: Revision is the revision information extracted
-                            from OCI annotations if available.
-                          type: string
-                        tag:
-                          description: Tag is the image tag (e.g., "v1.2.3", "latest").
-                          type: string
-                        version:
-                          description: Version is the semantic version extracted from
-                            OCI annotations if available.
-                          type: string
-                      required:
-                      - tag
-                      type: object
-                  required:
-                  - environment
-                  - timestamp
-                  - version
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
               deploymentUrl:
                 description: DeploymentURL is the URL of the deployment (backend-specific)
                 type: string
@@ -299,6 +209,93 @@ spec:
                       description: EnvironmentURL is the URL of the actual deployed
                         environment (e.g., dashboard URL)
                       type: string
+                    history:
+                      description: History contains deployment history entries for
+                        this environment
+                      items:
+                        description: DeploymentHistoryEntry represents a single entry
+                          in the deployment history.
+                        properties:
+                          bakeEndTime:
+                            description: |-
+                              BakeEndTime is the time when the bake period ended for this deployment
+                              This is when the bake process completed (either successfully or with failure).
+                            format: date-time
+                            type: string
+                          bakeStartTime:
+                            description: |-
+                              BakeStartTime is the time when the bake period started for this deployment
+                              This is when the rollout controller began monitoring the deployment for stability.
+                            format: date-time
+                            type: string
+                          bakeStatus:
+                            description: |-
+                              BakeStatus tracks the bake state for this deployment (e.g., None, InProgress, Succeeded, Failed, Cancelled)
+                              The bake process ensures that the deployment is stable and healthy before marking as successful.
+                            type: string
+                          bakeStatusMessage:
+                            description: |-
+                              BakeStatusMessage provides details about the bake state for this deployment
+                              This field contains human-readable information about why the bake status is what it is.
+                            type: string
+                          deployTime:
+                            description: |-
+                              DeployTime is the time when the deployment occurred
+                              This is when the rollout controller initiated the deployment.
+                            format: date-time
+                            type: string
+                          id:
+                            description: ID is a unique auto-incrementing identifier
+                              for this history entry.
+                            format: int64
+                            type: integer
+                          message:
+                            description: |-
+                              Message provides a descriptive message about this deployment entry
+                              This field contains human-readable information about the deployment context.
+                              For automatic deployments, it includes information about gate bypass and failed bake unblock.
+                              For manual deployments (when wantedVersion is specified), it can contain a custom message
+                              provided via the "rollout.kuberik.com/deployment-message" annotation, or defaults to "Manual deployment".
+                            type: string
+                          timestamp:
+                            description: Timestamp is the time when the deployment
+                              occurred.
+                            format: date-time
+                            type: string
+                          version:
+                            description: Version is the version information that was
+                              deployed.
+                            properties:
+                              created:
+                                description: Created is the creation timestamp extracted
+                                  from OCI annotations if available.
+                                format: date-time
+                                type: string
+                              digest:
+                                description: Digest is the image digest if available
+                                  from the ImagePolicy.
+                                type: string
+                              revision:
+                                description: Revision is the revision information
+                                  extracted from OCI annotations if available.
+                                type: string
+                              tag:
+                                description: Tag is the image tag (e.g., "v1.2.3",
+                                  "latest").
+                                type: string
+                              version:
+                                description: Version is the semantic version extracted
+                                  from OCI annotations if available.
+                                type: string
+                            required:
+                            - tag
+                            type: object
+                        required:
+                        - timestamp
+                        - version
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                     relationship:
                       description: Relationship defines how this environment relates
                         to another environment
