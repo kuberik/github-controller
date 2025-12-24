@@ -331,13 +331,6 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 		needsUpdate = true
 	}
 
-	// Update last sync time
-	now := metav1.Now()
-	if environment.Status.LastSyncTime == nil || environment.Status.LastSyncTime.Before(&now) {
-		environment.Status.LastSyncTime = &now
-		needsUpdate = true
-	}
-
 	// Update current version
 	currentVersion := r.getCurrentVersionFromRollout(rollout)
 	if currentVersion != nil && environment.Status.CurrentVersion != *currentVersion {
@@ -391,6 +384,9 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 	}
 
 	if needsUpdate {
+		// Update last status change time only when status actually changes
+		now := metav1.Now()
+		environment.Status.LastStatusChangeTime = &now
 		return r.Status().Update(ctx, environment)
 	}
 

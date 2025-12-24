@@ -323,8 +323,9 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
-              lastSyncTime:
-                description: LastSyncTime is the last time the deployment was synchronized
+              lastStatusChangeTime:
+                description: LastStatusChangeTime is the last time the status was
+                  updated (only updated when status changes)
                 format: date-time
                 type: string
               rolloutGateRef:

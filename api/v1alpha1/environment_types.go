@@ -129,9 +129,9 @@ type EnvironmentStatus struct {
 	// +optional
 	DeploymentURL string `json:"deploymentUrl,omitempty"`
 
-	// LastSyncTime is the last time the deployment was synchronized
+	// LastStatusChangeTime is the last time the status was updated (only updated when status changes)
 	// +optional
-	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+	LastStatusChangeTime *metav1.Time `json:"lastStatusChangeTime,omitempty"`
 
 	// CurrentVersion is the current version being deployed
 	// +optional

@@ -165,8 +165,8 @@ func (in *EnvironmentStatus) DeepCopyInto(out *EnvironmentStatus) {
 		*out = new(int64)
 		**out = **in
 	}
-	if in.LastSyncTime != nil {
-		in, out := &in.LastSyncTime, &out.LastSyncTime
+	if in.LastStatusChangeTime != nil {
+		in, out := &in.LastStatusChangeTime, &out.LastStatusChangeTime
 		*out = (*in).DeepCopy()
 	}
 	if in.RolloutGateRef != nil {
