@@ -986,7 +986,7 @@ func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Co
 	deploymentMap := make(map[int64]*github.Deployment)
 	for _, d := range deployments {
 		payload := r.extractDeploymentPayload(d)
-		if payload == nil || payload.ID == "" {
+		if payload == nil || payload.ID == "" || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
 			continue
 		}
 		entryID, err := strconv.ParseInt(payload.ID, 10, 64)
@@ -999,48 +999,21 @@ func (r *GitHubEnvironmentReconciler) buildHistoryFromDeployments(ctx context.Co
 		deploymentMap[entryID] = d
 	}
 
-	// If we have rollout history order, process deployments in that order
-	// Otherwise, process in the order GitHub returns them
-	if len(rolloutHistoryOrder) > 0 {
-		for _, entryID := range rolloutHistoryOrder {
-			d, exists := deploymentMap[entryID]
-			if !exists {
-				continue
-			}
-			if seenIDs[entryID] {
-				continue
-			}
-			// Process this deployment
-			if entry := r.processDeploymentForHistory(ctx, ghClient, owner, repo, d, entryID, envDeploymentStatuses, envName); entry != nil {
-				historyEntries = append(historyEntries, *entry)
-				seenIDs[entryID] = true
-			}
+	// Process deployments in rollout history order if provided, otherwise process all from map
+	processOrder := rolloutHistoryOrder
+	if len(processOrder) == 0 {
+		// If no order specified, process all deployments from the map
+		processOrder = make([]int64, 0, len(deploymentMap))
+		for entryID := range deploymentMap {
+			processOrder = append(processOrder, entryID)
 		}
 	}
 
-	// Process any remaining deployments that weren't in the rollout history order
-	for _, d := range deployments {
-		payload := r.extractDeploymentPayload(d)
-		if payload == nil || payload.Version == nil || payload.Version.Revision == nil || *payload.Version.Revision == "" {
+	for _, entryID := range processOrder {
+		d, exists := deploymentMap[entryID]
+		if !exists || seenIDs[entryID] {
 			continue
 		}
-
-		// Parse ID from payload (stored as string, need to convert to int64)
-		entryID, err := strconv.ParseInt(payload.ID, 10, 64)
-		if err != nil {
-			continue
-		}
-
-		// For environments with Environment resources, only include entries in rollout's current history
-		if len(rolloutHistoryIDs) > 0 && !rolloutHistoryIDs[entryID] {
-			continue
-		}
-
-		// Skip if we've already seen this ID
-		if seenIDs[entryID] {
-			continue
-		}
-
 		// Process this deployment
 		if entry := r.processDeploymentForHistory(ctx, ghClient, owner, repo, d, entryID, envDeploymentStatuses, envName); entry != nil {
 			historyEntries = append(historyEntries, *entry)
@@ -1068,26 +1041,15 @@ func (r *GitHubEnvironmentReconciler) processDeploymentForHistory(ctx context.Co
 
 	// Get the latest deployment status from GitHub to get bake status
 	// This is the source of truth for deployment status
-	// Fetch all pages to ensure we get the latest status (in case there are many statuses)
 	var statuses []*github.DeploymentStatus
 	if d.ID != nil {
-		allStatuses := make([]*github.DeploymentStatus, 0)
-		statusOpts := &github.ListOptions{PerPage: 100}
-		for {
-			pageStatuses, resp, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, d.GetID(), statusOpts)
-			if err != nil {
-				// Log error but continue - we'll add entry without status if fetch fails
-				// This ensures we don't skip deployments due to transient errors
-				log.FromContext(ctx).Error(err, "Failed to list deployment statuses for deployment", "deploymentID", *d.ID, "entryID", entryID, "envName", envName)
-				break
-			}
-			allStatuses = append(allStatuses, pageStatuses...)
-			if resp.NextPage == 0 {
-				break
-			}
-			statusOpts.Page = resp.NextPage
+		var err error
+		statuses, err = r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, d.GetID(), entryID, envName)
+		if err != nil {
+			// Log error but continue - we'll add entry without status if fetch fails
+			// This ensures we don't skip deployments due to transient errors
+			log.FromContext(ctx).Error(err, "Failed to list deployment statuses for deployment", "deploymentID", *d.ID, "entryID", entryID, "envName", envName)
 		}
-		statuses = allStatuses
 	}
 
 	// Always apply statuses if we have them
@@ -1104,6 +1066,25 @@ func (r *GitHubEnvironmentReconciler) processDeploymentForHistory(ctx context.Co
 	// Note: Even if status fetch fails or returns empty, we still add the entry (without bakeStatus)
 
 	return &entry
+}
+
+// fetchAllDeploymentStatuses fetches all deployment statuses with pagination
+// entryID and envName are optional parameters used for logging errors
+func (r *GitHubEnvironmentReconciler) fetchAllDeploymentStatuses(ctx context.Context, ghClient *github.Client, owner, repo string, deploymentID int64, entryID int64, envName string) ([]*github.DeploymentStatus, error) {
+	allStatuses := make([]*github.DeploymentStatus, 0)
+	statusOpts := &github.ListOptions{PerPage: 100}
+	for {
+		pageStatuses, resp, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, deploymentID, statusOpts)
+		if err != nil {
+			return allStatuses, err
+		}
+		allStatuses = append(allStatuses, pageStatuses...)
+		if resp.NextPage == 0 {
+			break
+		}
+		statusOpts.Page = resp.NextPage
+	}
+	return allStatuses, nil
 }
 
 // applyRolloutGateDesiredState applies the desired state to a RolloutGate based on the Deployment spec.
@@ -1264,6 +1245,12 @@ func (r *GitHubEnvironmentReconciler) createOrUpdateRolloutGate(ctx context.Cont
 	return nil
 }
 
+// environmentInfo holds information about an environment's deployment
+type environmentInfo struct {
+	EnvironmentURL string
+	Relationship   *kuberikv1alpha1.EnvironmentRelationship
+}
+
 // relationshipGraphData holds the data needed for relationship-based operations
 type relationshipGraphData struct {
 	relevantEnvironments map[string]bool
@@ -1273,10 +1260,7 @@ type relationshipGraphData struct {
 	envHistory map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry
 	// envDeploymentStatuses maps environment name -> version -> GitHub deployment status ("success", "failure", etc.)
 	envDeploymentStatuses map[string]map[string]string
-	environmentInfos      map[string]struct {
-		EnvironmentURL string
-		Relationship   *kuberikv1alpha1.EnvironmentRelationship
-	}
+	environmentInfos      map[string]environmentInfo
 }
 
 // buildRelationshipGraph discovers all environments and builds the relationship graph
@@ -1383,10 +1367,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	traverseRelationships(currentEnv)
 
 	// Track environment info (environment URL and relationship) for all environments
-	environmentInfos := make(map[string]struct {
-		EnvironmentURL string
-		Relationship   *kuberikv1alpha1.EnvironmentRelationship
-	})
+	environmentInfos := make(map[string]environmentInfo)
 
 	// First, update environment infos from GitHub deployments
 	for envName, deployments := range envDeployments {
@@ -1396,10 +1377,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 
 		// Track the latest environment URL and relationship (first deployment in list is latest)
 		latestDeployment := deployments[0]
-		envInfo := struct {
-			EnvironmentURL string
-			Relationship   *kuberikv1alpha1.EnvironmentRelationship
-		}{}
+		envInfo := environmentInfo{}
 
 		// Extract relationship from the latest deployment's payload
 		payload := r.extractDeploymentPayload(latestDeployment)
@@ -1408,7 +1386,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 
 		// Extract environment URL from the latest deployment's statuses
-		statuses, _, err := ghClient.Repositories.ListDeploymentStatuses(ctx, owner, repo, latestDeployment.GetID(), nil)
+		statuses, err := r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, latestDeployment.GetID(), 0, envName)
 		if err == nil && len(statuses) > 0 {
 			// Statuses are ordered newest first, so the first one has the latest environment URL
 			if statuses[0].EnvironmentURL != nil && *statuses[0].EnvironmentURL != "" {
@@ -1423,29 +1401,23 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	// Reuse environmentList from above
 	for i := range environmentList.Items {
 		env := &environmentList.Items[i]
-		if env.Spec.Name != environment.Spec.Name {
-			continue
-		}
-		if env.Spec.Environment == "" {
+		if env.Spec.Name != environment.Spec.Name || env.Spec.Environment == "" {
 			continue
 		}
 		envName := env.Spec.Environment
 
 		// Only add if not already set from GitHub deployments and if it's a relevant environment
-		if _, exists := environmentInfos[envName]; !exists && relevantEnvironments[envName] {
-			envInfo := struct {
-				EnvironmentURL string
-				Relationship   *kuberikv1alpha1.EnvironmentRelationship
-			}{}
+		existingInfo, exists := environmentInfos[envName]
+		if !exists && relevantEnvironments[envName] {
+			envInfo := environmentInfo{}
 			if env.Spec.Relationship != nil {
 				envInfo.Relationship = env.Spec.Relationship
 			}
 			environmentInfos[envName] = envInfo
-		} else if exists && environmentInfos[envName].Relationship == nil && env.Spec.Relationship != nil {
+		} else if exists && existingInfo.Relationship == nil && env.Spec.Relationship != nil {
 			// Update relationship from Environment spec if not set from GitHub
-			envInfo := environmentInfos[envName]
-			envInfo.Relationship = env.Spec.Relationship
-			environmentInfos[envName] = envInfo
+			existingInfo.Relationship = env.Spec.Relationship
+			environmentInfos[envName] = existingInfo
 		}
 	}
 
