@@ -2448,8 +2448,8 @@ var _ = Describe("Environment Controller", func() {
 							Revision: &stagingRevision,
 						},
 						Timestamp: metav1.Now(),
-						// Start with Pending status - will transition to Succeeded in test
-						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusPending),
+						// Start with Deploying status - will transition to Succeeded in test
+						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusDeploying),
 					},
 				},
 			}
@@ -2575,9 +2575,9 @@ var _ = Describe("Environment Controller", func() {
 			Expect(len(stagingInfo.History)).To(Equal(1))
 			Expect(stagingInfo.History[0].Version.Revision).ToNot(BeNil())
 			Expect(*stagingInfo.History[0].Version.Revision).To(Equal(stagingRevision))
-			// Initially should have Pending status (set in initial rollout status)
+			// Initially should have Deploying status (set in initial rollout status)
 			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
-			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending), "staging history should initially show Pending status")
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusDeploying), "staging history should initially show Deploying status")
 
 			By("Updating staging rollout bake status to Succeeded and verifying it updates in production Environment")
 			stagingRollout.Status.History[0].BakeStatus = k8sptr.To(kuberikrolloutv1alpha1.BakeStatusSucceeded)
@@ -2643,7 +2643,7 @@ var _ = Describe("Environment Controller", func() {
 							Revision: &stagingRevision,
 						},
 						Timestamp:  metav1.Now(),
-						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusPending),
+						BakeStatus: k8sptr.To(kuberikrolloutv1alpha1.BakeStatusDeploying),
 					},
 				},
 			}
@@ -2752,7 +2752,7 @@ var _ = Describe("Environment Controller", func() {
 			Expect(stagingInfo).ToNot(BeNil())
 			Expect(len(stagingInfo.History)).To(Equal(1))
 			Expect(stagingInfo.History[0].BakeStatus).ToNot(BeNil())
-			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending))
+			Expect(*stagingInfo.History[0].BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusDeploying))
 
 			By("Updating staging rollout status to InProgress")
 			// Re-fetch the rollout to get the latest version
@@ -3156,7 +3156,7 @@ var _ = Describe("Environment Controller", func() {
 				pendingState := "pending"
 				statusRequest := &github.DeploymentStatusRequest{
 					State:       &pendingState,
-					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.0.0 pending", kuberikrolloutv1alpha1.BakeStatusPending)),
+					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.0.0 pending", kuberikrolloutv1alpha1.BakeStatusDeploying)),
 				}
 				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
 				Expect(err).ToNot(HaveOccurred())
@@ -3213,10 +3213,10 @@ var _ = Describe("Environment Controller", func() {
 				Fail("Entry 2 should have bakeStatus set")
 			}
 
-			// Entry 1 should have Pending status
+			// Entry 1 should have Deploying status
 			if entry, ok := entryMap[1]; ok {
 				Expect(entry.BakeStatus).ToNot(BeNil(), "Entry 1 should have bakeStatus set")
-				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusPending), "Entry 1 should be Pending")
+				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusDeploying), "Entry 1 should be Deploying")
 				Expect(entry.BakeStatusMessage).ToNot(BeNil())
 				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.0.0 pending"))
 			} else {

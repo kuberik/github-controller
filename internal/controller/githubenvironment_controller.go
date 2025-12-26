@@ -775,7 +775,7 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 			message = *h.BakeStatusMessage
 		}
 		// Get the actual bake status value
-		bakeStatusVal := kuberikrolloutv1alpha1.BakeStatusPending
+		bakeStatusVal := kuberikrolloutv1alpha1.BakeStatusDeploying
 		if h.BakeStatus != nil {
 			bakeStatusVal = *h.BakeStatus
 		}
@@ -893,7 +893,7 @@ func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	default:
 		ghState = "pending"
 		defaultDesc = "Deployment in progress"
-		status = kuberikrolloutv1alpha1.BakeStatusPending
+		status = kuberikrolloutv1alpha1.BakeStatusDeploying
 	}
 
 	// Encode bake status in description: "BAKE_STATUS:<status>|<message>"

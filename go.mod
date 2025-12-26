@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/google/go-github/v62 v62.0.0
-	github.com/kuberik/rollout-controller v0.4.1-0.20251112203846-e87981f6668f
+	github.com/kuberik/rollout-controller v0.5.1-0.20251226192013-e2abaa863f57
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	golang.org/x/oauth2 v0.30.0
