@@ -238,12 +238,30 @@ spec:
                               BakeStatusMessage provides details about the bake state for this deployment
                               This field contains human-readable information about why the bake status is what it is.
                             type: string
-                          deployTime:
+                          failedHealthChecks:
                             description: |-
-                              DeployTime is the time when the deployment occurred
-                              This is when the rollout controller initiated the deployment.
-                            format: date-time
-                            type: string
+                              FailedHealthChecks contains all health checks that failed during bake.
+                              This field is populated when bake fails due to health check errors.
+                            items:
+                              description: FailedHealthCheck represents a health check
+                                that failed during bake.
+                              properties:
+                                message:
+                                  description: Message is the error message from the
+                                    health check.
+                                  type: string
+                                name:
+                                  description: Name is the name of the health check.
+                                  type: string
+                                namespace:
+                                  description: Namespace is the namespace of the health
+                                    check.
+                                  type: string
+                              required:
+                              - name
+                              - namespace
+                              type: object
+                            type: array
                           id:
                             description: ID is a unique auto-incrementing identifier
                               for this history entry.
@@ -262,6 +280,32 @@ spec:
                               occurred.
                             format: date-time
                             type: string
+                          triggeredBy:
+                            description: |-
+                              TriggeredBy indicates what triggered this deployment.
+                              Kind can be "User" for manual deployments triggered by a user, or "System" for automatic deployments.
+                              Name contains the name of the user or system that triggered the deployment.
+                              For user-triggered deployments, this is extracted from the "rollout.kuberik.com/deploy-user" annotation.
+                              For system-triggered deployments, this is typically "rollout-controller".
+                            properties:
+                              kind:
+                                description: |-
+                                  Kind indicates the type of trigger: "User" for manual deployments triggered by a user,
+                                  or "System" for automatic deployments triggered by the rollout controller.
+                                enum:
+                                - User
+                                - System
+                                type: string
+                              name:
+                                description: |-
+                                  Name contains the name of the user or system that triggered the deployment.
+                                  For user-triggered deployments, this is extracted from the "rollout.kuberik.com/deploy-user" annotation.
+                                  For system-triggered deployments, this is typically "rollout-controller".
+                                type: string
+                            required:
+                            - kind
+                            - name
+                            type: object
                           version:
                             description: Version is the version information that was
                               deployed.
