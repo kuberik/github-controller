@@ -872,6 +872,9 @@ func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	case kuberikrolloutv1alpha1.BakeStatusInProgress:
 		ghState = "in_progress"
 		statusPrefix = "Baking in progress"
+	case kuberikrolloutv1alpha1.BakeStatusDeploying:
+		ghState = "in_progress"
+		statusPrefix = "Deploying"
 	case kuberikrolloutv1alpha1.BakeStatusCancelled:
 		ghState = "inactive"
 		statusPrefix = "Bake cancelled"
