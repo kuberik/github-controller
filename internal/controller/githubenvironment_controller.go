@@ -767,31 +767,19 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 		}
 
 		// Determine desired GH status for this history entry
-		ghState, defaultDesc := mapBakeToGitHubState(h.BakeStatus)
-		// Build description with bake status encoded: "BAKE_STATUS:<status>|<message>"
-		// Use the rollout's BakeStatusMessage if available, otherwise use the default message
-		message := defaultDesc
+		ghState, statusPrefix := mapBakeToGitHubState(h.BakeStatus)
+		// Format description with status prefix: "Status: message"
+		// Use the rollout's BakeStatusMessage if available, otherwise use just the status prefix
+		var message string
 		if h.BakeStatusMessage != nil && *h.BakeStatusMessage != "" {
-			message = *h.BakeStatusMessage
+			message = fmt.Sprintf("%s: %s", statusPrefix, *h.BakeStatusMessage)
+		} else {
+			message = statusPrefix
 		}
-		// Get the actual bake status value
-		bakeStatusVal := kuberikrolloutv1alpha1.BakeStatusDeploying
-		if h.BakeStatus != nil {
-			bakeStatusVal = *h.BakeStatus
-		}
-		// Format: "BAKE_STATUS:<status>|<message>"
-		ghDesc := fmt.Sprintf("%s%s|%s", bakeStatusPrefix, bakeStatusVal, message)
 		// Truncate to 140 chars if needed (GitHub limit)
+		ghDesc := message
 		if len(ghDesc) > 140 {
-			// Keep the prefix and status, truncate the message part
-			prefixAndStatus := fmt.Sprintf("%s%s|", bakeStatusPrefix, bakeStatusVal)
-			maxMsgLen := 140 - len(prefixAndStatus)
-			if maxMsgLen > 0 {
-				ghDesc = prefixAndStatus + message[:maxMsgLen]
-			} else {
-				// If prefix+status is already too long, just use prefix+status
-				ghDesc = prefixAndStatus[:140]
-			}
+			ghDesc = ghDesc[:140]
 		}
 
 		// Check all statuses to see if we've already created this exact status
@@ -864,11 +852,8 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 	return nil, "", nil, fmt.Errorf("failed to find or create deployment for ID %s and environment %s", latestID, environment.Spec.Environment)
 }
 
-// bakeStatusPrefix is the prefix used in GitHub status descriptions to encode bake status
-const bakeStatusPrefix = "BAKE_STATUS:"
-
-// mapBakeToGitHubState maps bake status/message to GitHub DeploymentStatus state and description
-// The description includes the bake status in a predictable format: "BAKE_STATUS:<status>|<message>"
+// mapBakeToGitHubState maps bake status/message to GitHub DeploymentStatus state and description prefix
+// Returns the GitHub state and a user-friendly status prefix for the description
 func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	var status string
 	if bakeStatus != nil {
@@ -876,95 +861,107 @@ func mapBakeToGitHubState(bakeStatus *string) (string, string) {
 	}
 
 	var ghState string
-	var defaultDesc string
+	var statusPrefix string
 	switch status {
 	case kuberikrolloutv1alpha1.BakeStatusSucceeded:
 		ghState = "success"
-		defaultDesc = "Bake succeeded"
+		statusPrefix = "Bake succeeded"
 	case kuberikrolloutv1alpha1.BakeStatusFailed:
 		ghState = "failure"
-		defaultDesc = "Bake failed"
+		statusPrefix = "Bake failed"
 	case kuberikrolloutv1alpha1.BakeStatusInProgress:
 		ghState = "in_progress"
-		defaultDesc = "Baking in progress"
+		statusPrefix = "Baking in progress"
 	case kuberikrolloutv1alpha1.BakeStatusCancelled:
 		ghState = "inactive"
-		defaultDesc = "Bake cancelled"
+		statusPrefix = "Bake cancelled"
 	default:
 		ghState = "pending"
-		defaultDesc = "Deployment in progress"
-		status = kuberikrolloutv1alpha1.BakeStatusDeploying
+		statusPrefix = "Deploying"
 	}
 
-	// Encode bake status in description: "BAKE_STATUS:<status>|<message>"
-	// This allows us to extract the exact bake status later
-	desc := fmt.Sprintf("%s%s|%s", bakeStatusPrefix, status, defaultDesc)
-	return ghState, desc
+	return ghState, statusPrefix
 }
 
 // extractBakeStatusFromDescription extracts bake status from GitHub status description
-// Format: "BAKE_STATUS:<status>|<message>" or just "<message>" for backward compatibility
+// The description format is: "Status: message" or just "Status"
+// It parses the status prefix to reliably determine the bake status
 func extractBakeStatusFromDescription(description string) (*string, *string) {
 	if description == "" {
 		return nil, nil
 	}
 
-	// Check if description contains the bake status prefix
-	if strings.HasPrefix(description, bakeStatusPrefix) {
-		// Extract the part after the prefix
-		afterPrefix := description[len(bakeStatusPrefix):]
-		// Split by "|" to separate status and message
-		parts := strings.SplitN(afterPrefix, "|", 2)
-		if len(parts) >= 1 {
-			bakeStatus := strings.TrimSpace(parts[0])
-			var message *string
-			if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
-				msg := strings.TrimSpace(parts[1])
-				// Truncate to 140 chars if needed
-				if len(msg) > 140 {
-					msg = msg[:140]
-				}
-				message = &msg
+	// Parse the description format: "Status: message" or just "Status"
+	// Split by ":" to separate status prefix from message
+	parts := strings.SplitN(description, ":", 2)
+	statusPrefix := strings.TrimSpace(parts[0])
+
+	var bakeStatus *string
+	var message *string
+
+	// Determine bake status from the status prefix
+	switch statusPrefix {
+	case "Bake succeeded":
+		status := kuberikrolloutv1alpha1.BakeStatusSucceeded
+		bakeStatus = &status
+	case "Bake failed":
+		status := kuberikrolloutv1alpha1.BakeStatusFailed
+		bakeStatus = &status
+	case "Baking in progress":
+		status := kuberikrolloutv1alpha1.BakeStatusInProgress
+		bakeStatus = &status
+	case "Bake cancelled":
+		status := kuberikrolloutv1alpha1.BakeStatusCancelled
+		bakeStatus = &status
+	case "Deploying":
+		status := kuberikrolloutv1alpha1.BakeStatusDeploying
+		bakeStatus = &status
+	default:
+		// If we don't recognize the prefix, return nil for status
+		// This handles cases where GitHub sets automatic statuses
+		bakeStatus = nil
+	}
+
+	// Extract message if present (part after ":")
+	if len(parts) >= 2 {
+		msg := strings.TrimSpace(parts[1])
+		if msg != "" {
+			// Truncate to 140 chars if needed
+			if len(msg) > 140 {
+				msg = msg[:140]
 			}
-			return &bakeStatus, message
+			message = &msg
 		}
 	}
 
-	// Backward compatibility: if no prefix, return nil for status but use description as message
-	// Truncate to 140 chars if needed
-	msg := description
-	if len(msg) > 140 {
-		msg = msg[:140]
-	}
-	return nil, &msg
+	return bakeStatus, message
 }
 
 // applyGitHubStatusToEntry applies GitHub deployment status to a DeploymentHistoryEntry
-// It extracts bake status from the description field which contains it in a predictable format
-// It skips "inactive" statuses that don't have the BAKE_STATUS prefix and looks for the most recent
-// status that does have it, since inactive statuses are often set by GitHub automatically and don't
-// contain our bake status information
+// It extracts bake status by inferring from the GitHub state and description
+// It skips "inactive" statuses that don't appear to be from our controller (no meaningful description)
+// since inactive statuses are often set by GitHub automatically
 func applyGitHubStatusToEntry(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry, statuses []*github.DeploymentStatus) {
 	if len(statuses) == 0 {
 		return
 	}
 	// Statuses are ordered newest first
-	// Look for the most recent status that has the BAKE_STATUS prefix
-	// Skip "inactive" statuses that don't have it, as they're often set automatically by GitHub
+	// Look for the most recent status that appears to be from our controller
+	// Skip "inactive" statuses that don't have meaningful descriptions, as they're often set automatically by GitHub
 	for _, status := range statuses {
-		if status.Description == nil {
+		if status.Description == nil || *status.Description == "" {
 			continue
 		}
-		// Skip inactive statuses that don't have BAKE_STATUS prefix
-		// These are often set automatically by GitHub and don't contain our bake status
+		// Skip inactive statuses that don't appear to be from our controller
+		// These are often set automatically by GitHub and don't contain our bake status information
 		if status.State != nil && *status.State == "inactive" {
-			if !strings.HasPrefix(*status.Description, bakeStatusPrefix) {
+			// Only consider inactive statuses that have our status prefix
+			if !strings.HasPrefix(*status.Description, "Bake cancelled") {
 				continue
 			}
 		}
 
 		// Extract bake status and message from description
-		// Format: "BAKE_STATUS:<status>|<message>"
 		bakeStatus, message := extractBakeStatusFromDescription(*status.Description)
 		if bakeStatus != nil {
 			entry.BakeStatus = bakeStatus

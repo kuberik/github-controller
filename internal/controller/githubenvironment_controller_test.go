@@ -3124,13 +3124,13 @@ var _ = Describe("Environment Controller", func() {
 			}
 
 			// Create statuses with different states for each deployment
-			// Use the format: "BAKE_STATUS:<status>|<message>"
+			// Use the format: "Status: message"
 			// Entry 3 (latest) -> success
 			if dep, ok := deploymentMap["3"]; ok {
 				successState := "success"
 				statusRequest := &github.DeploymentStatusRequest{
 					State:       &successState,
-					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.2.0 successful", kuberikrolloutv1alpha1.BakeStatusSucceeded)),
+					Description: github.String("Bake succeeded: Deployment v1.2.0 successful"),
 				}
 				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
 				Expect(err).ToNot(HaveOccurred())
@@ -3143,7 +3143,7 @@ var _ = Describe("Environment Controller", func() {
 				failureState := "failure"
 				statusRequest := &github.DeploymentStatusRequest{
 					State:       &failureState,
-					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.1.0 failed", kuberikrolloutv1alpha1.BakeStatusFailed)),
+					Description: github.String("Bake failed: Deployment v1.1.0 failed"),
 				}
 				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
 				Expect(err).ToNot(HaveOccurred())
@@ -3156,7 +3156,7 @@ var _ = Describe("Environment Controller", func() {
 				pendingState := "pending"
 				statusRequest := &github.DeploymentStatusRequest{
 					State:       &pendingState,
-					Description: github.String(fmt.Sprintf("BAKE_STATUS:%s|Deployment v1.0.0 pending", kuberikrolloutv1alpha1.BakeStatusDeploying)),
+					Description: github.String("Deploying: Deployment v1.0.0 in progress"),
 				}
 				_, _, err = githubClient.Repositories.CreateDeploymentStatus(context.Background(), "kuberik", "environment-controller-testing", dep.GetID(), statusRequest)
 				Expect(err).ToNot(HaveOccurred())
@@ -3213,19 +3213,19 @@ var _ = Describe("Environment Controller", func() {
 				Fail("Entry 2 should have bakeStatus set")
 			}
 
-			// Entry 1 should have Deploying status
+			// Entry 1 should have Deploying status (parsed from description)
 			if entry, ok := entryMap[1]; ok {
 				Expect(entry.BakeStatus).ToNot(BeNil(), "Entry 1 should have bakeStatus set")
 				Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusDeploying), "Entry 1 should be Deploying")
 				Expect(entry.BakeStatusMessage).ToNot(BeNil())
-				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.0.0 pending"))
+				Expect(*entry.BakeStatusMessage).To(Equal("Deployment v1.0.0 in progress"))
 			} else {
 				Fail("Entry 1 should have bakeStatus set")
 			}
 		})
 	})
 
-	It("Should preserve bakeStatus when inactive status without BAKE_STATUS prefix is present", func() {
+	It("Should preserve bakeStatus when inactive status without meaningful description is present", func() {
 		By("Creating a deployment history entry")
 		entryID := int64(1)
 		entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
@@ -3239,7 +3239,7 @@ var _ = Describe("Environment Controller", func() {
 
 		By("Creating GitHub statuses with inactive status first (newest), then the failed status")
 		// Statuses are ordered newest first
-		// First status is inactive without BAKE_STATUS prefix (set automatically by GitHub)
+		// First status is inactive without meaningful description (set automatically by GitHub)
 		inactiveState := "inactive"
 		inactiveDesc := "This deployment is inactive"
 		statuses := []*github.DeploymentStatus{
@@ -3247,24 +3247,24 @@ var _ = Describe("Environment Controller", func() {
 				State:       &inactiveState,
 				Description: &inactiveDesc,
 			},
-			// Second status has the BAKE_STATUS prefix (our status)
+			// Second status is our failed status (parsed from description)
 			{
 				State:       k8sptr.To("failure"),
-				Description: k8sptr.To("BAKE_STATUS:Failed|A HealthCheck reported an error after deployment."),
+				Description: k8sptr.To("Bake failed: A HealthCheck reported an error after deployment."),
 			},
 		}
 
 		By("Applying statuses to entry")
 		applyGitHubStatusToEntry(&entry, statuses)
 
-		By("Verifying bakeStatus is preserved from the status with BAKE_STATUS prefix")
+		By("Verifying bakeStatus is preserved from the failure status")
 		Expect(entry.BakeStatus).ToNot(BeNil())
 		Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusFailed))
 		Expect(entry.BakeStatusMessage).ToNot(BeNil())
 		Expect(*entry.BakeStatusMessage).To(Equal("A HealthCheck reported an error after deployment."))
 	})
 
-	It("Should handle multiple inactive statuses and find the most recent with BAKE_STATUS prefix", func() {
+	It("Should handle multiple inactive statuses and find the most recent meaningful status", func() {
 		By("Creating a deployment history entry")
 		entryID := int64(1)
 		entry := kuberikrolloutv1alpha1.DeploymentHistoryEntry{
@@ -3274,32 +3274,32 @@ var _ = Describe("Environment Controller", func() {
 			},
 		}
 
-		By("Creating GitHub statuses with multiple inactive statuses, then a succeeded status with BAKE_STATUS prefix")
+		By("Creating GitHub statuses with multiple inactive statuses, then a succeeded status")
 		inactiveState := "inactive"
 		inactiveDesc1 := "This deployment is inactive"
 		inactiveDesc2 := "Deployment cancelled"
 		statuses := []*github.DeploymentStatus{
-			// Newest: inactive without BAKE_STATUS
+			// Newest: inactive without meaningful description (skipped)
 			{
 				State:       &inactiveState,
 				Description: &inactiveDesc1,
 			},
-			// Second: inactive without BAKE_STATUS
+			// Second: inactive with "cancelled" keyword (could be our status)
 			{
 				State:       &inactiveState,
 				Description: &inactiveDesc2,
 			},
-			// Third: succeeded with BAKE_STATUS prefix (our status)
+			// Third: succeeded status (our status, parsed from description)
 			{
 				State:       k8sptr.To("success"),
-				Description: k8sptr.To("BAKE_STATUS:Succeeded|Bake time completed successfully (no errors within bake time)."),
+				Description: k8sptr.To("Bake succeeded: Bake time completed successfully (no errors within bake time)."),
 			},
 		}
 
 		By("Applying statuses to entry")
 		applyGitHubStatusToEntry(&entry, statuses)
 
-		By("Verifying bakeStatus is set from the status with BAKE_STATUS prefix")
+		By("Verifying bakeStatus is set from the succeeded status")
 		Expect(entry.BakeStatus).ToNot(BeNil())
 		Expect(*entry.BakeStatus).To(Equal(kuberikrolloutv1alpha1.BakeStatusSucceeded))
 		Expect(entry.BakeStatusMessage).ToNot(BeNil())
