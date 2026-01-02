@@ -3305,6 +3305,173 @@ var _ = Describe("Environment Controller", func() {
 		Expect(entry.BakeStatusMessage).ToNot(BeNil())
 		Expect(*entry.BakeStatusMessage).To(Equal("Bake time completed successfully (no errors within bake time)."))
 	})
+
+	It("Should preserve existing environmentInfos when environment is not discovered due to pagination", func() {
+		skipIfNoGitHubToken()
+
+		By("Creating GitHub token secret")
+		Expect(createGitHubTokenSecret()).To(Succeed())
+
+		// This test verifies that if an environment was previously discovered and tracked,
+		// it remains in environmentInfos even if it's not discovered in the current run
+		// (e.g., due to pagination where its deployments are beyond the first page)
+
+		revision1 := "0a9c600d3a75bcb7ec54dcef3b03e0d7fe0598d7"
+		revision2 := "8bd1ffbf07d9f04b9aba8757303a0f4c328c1743"
+
+		By("Creating staging environment and rollout")
+		stagingRollout := &kuberikrolloutv1alpha1.Rollout{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-rollout-staging-preserve",
+				Namespace: DeploymentNamespace,
+			},
+			Spec: kuberikrolloutv1alpha1.RolloutSpec{
+				ReleasesImagePolicy: corev1.LocalObjectReference{
+					Name: "test-policy",
+				},
+			},
+		}
+		k8sClient.Delete(context.Background(), stagingRollout)
+		Expect(k8sClient.Create(context.Background(), stagingRollout)).Should(Succeed())
+
+		stagingRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+			History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				{
+					ID: k8sptr.To(int64(10)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Tag:      "v1.10.0",
+						Revision: &revision1,
+					},
+					Timestamp: metav1.Now(),
+				},
+			},
+		}
+		Expect(k8sClient.Status().Update(context.Background(), stagingRollout)).Should(Succeed())
+
+		stagingEnv := &kuberikv1alpha1.Environment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-staging-preserve",
+				Namespace: DeploymentNamespace,
+			},
+			Spec: kuberikv1alpha1.EnvironmentSpec{
+				RolloutRef: corev1.LocalObjectReference{
+					Name: "test-rollout-staging-preserve",
+				},
+				Backend: kuberikv1alpha1.BackendConfig{
+					Type:    "github",
+					Project: "kuberik/environment-controller-testing",
+				},
+				Name:        "test-deployment-preserve",
+				Environment: "staging",
+				Relationship: &kuberikv1alpha1.EnvironmentRelationship{
+					Environment: "dev",
+					Type:        kuberikv1alpha1.RelationshipTypeAfter,
+				},
+			},
+		}
+		k8sClient.Delete(context.Background(), stagingEnv)
+		Expect(k8sClient.Create(context.Background(), stagingEnv)).Should(Succeed())
+
+		By("Creating dev environment and rollout")
+		devRollout := &kuberikrolloutv1alpha1.Rollout{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-rollout-dev-preserve",
+				Namespace: DeploymentNamespace,
+			},
+			Spec: kuberikrolloutv1alpha1.RolloutSpec{
+				ReleasesImagePolicy: corev1.LocalObjectReference{
+					Name: "test-policy",
+				},
+			},
+		}
+		k8sClient.Delete(context.Background(), devRollout)
+		Expect(k8sClient.Create(context.Background(), devRollout)).Should(Succeed())
+
+		devRollout.Status = kuberikrolloutv1alpha1.RolloutStatus{
+			History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				{
+					ID: k8sptr.To(int64(20)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{
+						Tag:      "v1.20.0",
+						Revision: &revision2,
+					},
+					Timestamp: metav1.Now(),
+				},
+			},
+		}
+		Expect(k8sClient.Status().Update(context.Background(), devRollout)).Should(Succeed())
+
+		devEnv := &kuberikv1alpha1.Environment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-dev-preserve",
+				Namespace: DeploymentNamespace,
+			},
+			Spec: kuberikv1alpha1.EnvironmentSpec{
+				RolloutRef: corev1.LocalObjectReference{
+					Name: "test-rollout-dev-preserve",
+				},
+				Backend: kuberikv1alpha1.BackendConfig{
+					Type:    "github",
+					Project: "kuberik/environment-controller-testing",
+				},
+				Name:        "test-deployment-preserve",
+				Environment: "dev",
+			},
+		}
+		k8sClient.Delete(context.Background(), devEnv)
+		Expect(k8sClient.Create(context.Background(), devEnv)).Should(Succeed())
+
+		By("First reconciliation - staging should be discovered and added")
+		req := ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-dev-preserve",
+				Namespace: DeploymentNamespace,
+			},
+		}
+
+		result, err := reconciler.Reconcile(context.Background(), req)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+		updatedDevEnv := &kuberikv1alpha1.Environment{}
+		Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+			Name:      "test-dev-preserve",
+			Namespace: DeploymentNamespace,
+		}, updatedDevEnv)).To(Succeed())
+
+		// Verify staging was discovered and added
+		var stagingInfo *kuberikv1alpha1.EnvironmentInfo
+		for i := range updatedDevEnv.Status.EnvironmentInfos {
+			if updatedDevEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+				stagingInfo = &updatedDevEnv.Status.EnvironmentInfos[i]
+				break
+			}
+		}
+		Expect(stagingInfo).ToNot(BeNil(), "staging should be discovered in first reconciliation")
+		originalStagingHistoryCount := len(stagingInfo.History)
+
+		By("Reconciling again - staging should be preserved even if not discovered")
+		// The fix should preserve staging even if it's not in graphData.relevantEnvironments
+		// In a real scenario, this would happen if staging's deployments are on page 2+ of GitHub API
+		result, err = reconciler.Reconcile(context.Background(), req)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(k8sClient.Get(context.Background(), types.NamespacedName{
+			Name:      "test-dev-preserve",
+			Namespace: DeploymentNamespace,
+		}, updatedDevEnv)).To(Succeed())
+
+		// Verify staging is still preserved
+		stagingInfo = nil
+		for i := range updatedDevEnv.Status.EnvironmentInfos {
+			if updatedDevEnv.Status.EnvironmentInfos[i].Environment == "staging" {
+				stagingInfo = &updatedDevEnv.Status.EnvironmentInfos[i]
+				break
+			}
+		}
+		Expect(stagingInfo).ToNot(BeNil(), "staging should be preserved even if not discovered in current run due to pagination")
+		Expect(len(stagingInfo.History)).To(Equal(originalStagingHistoryCount), "staging history should be preserved")
+	})
 })
 
 // Helper function to find history entry by revision

@@ -1287,6 +1287,9 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 	task := formatDeploymentTask(deploymentName)
 	allDeployments, _, err := ghClient.Repositories.ListDeployments(ctx, owner, repo, &github.DeploymentsListOptions{
 		Task: task,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all deployments: %w", err)
@@ -1695,10 +1698,32 @@ func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironm
 		environmentInfoList = updateEnvironmentInfoWithHistory(environmentInfoList, envName, info.EnvironmentURL, info.Relationship, history)
 	}
 
-	// Clean up environment infos for environments that are no longer relevant
-	environmentInfoList = removeEnvironmentInfos(environmentInfoList, func(entry kuberikv1alpha1.EnvironmentInfo) bool {
-		return !graphData.relevantEnvironments[entry.Environment]
-	})
+	// Preserve existing environmentInfos that weren't discovered in this run
+	// This prevents data loss when environments aren't discovered due to:
+	// - Pagination issues (deployments beyond first page)
+	// - Temporary GitHub API issues
+	// - Controller restarts
+	// We preserve them because:
+	// 1. History is bounded by rollout controller (won't accumulate unbounded stale data)
+	// 2. They'll be refreshed when successfully discovered again
+	// 3. Prevents silent relationship graph breakdown
+	// Note: We intentionally don't remove environments here - that can be handled later
+	// if we need explicit environment removal functionality
+	for _, existingInfo := range environment.Status.EnvironmentInfos {
+		// Check if this environment is already in our updated list
+		found := false
+		for _, updatedInfo := range environmentInfoList {
+			if updatedInfo.Environment == existingInfo.Environment {
+				found = true
+				break
+			}
+		}
+		// If not found and it was previously tracked, preserve it
+		if !found {
+			// Preserve the existing environmentInfo (with its last known state)
+			environmentInfoList = append(environmentInfoList, *existingInfo.DeepCopy())
+		}
+	}
 
 	// Check if environment infos need update
 	if !environmentInfosEqual(environment.Status.EnvironmentInfos, environmentInfoList) {
