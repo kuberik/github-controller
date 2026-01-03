@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -25,13 +27,24 @@ import (
 
 	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
 	kuberikrolloutv1alpha1 "github.com/kuberik/rollout-controller/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 	var reconciler *GitHubEnvironmentReconciler
 
 	BeforeEach(func() {
-		reconciler = &GitHubEnvironmentReconciler{}
+		scheme := runtime.NewScheme()
+		_ = kuberikv1alpha1.AddToScheme(scheme)
+		_ = kuberikrolloutv1alpha1.AddToScheme(scheme)
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&kuberikv1alpha1.Environment{}).
+			Build()
+		reconciler = &GitHubEnvironmentReconciler{
+			Client: fakeClient,
+		}
 	})
 
 	Context("getCurrentVersionFromRollout", func() {
@@ -401,8 +414,220 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 			}
 			Expect(devFound).To(BeTrue())
 		})
+
+		It("Should sort environmentInfos by relationship (ancestor first)", func() {
+			// This test verifies that updateDeploymentStatusesForRelatedEnvironments
+			// sorts environmentInfos topologically: ancestor -> descendant
+
+			environment := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-deployment",
+					Namespace: "default",
+				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					Environment: "dev",
+					Name:        "test-deployment",
+					Backend: kuberikv1alpha1.BackendConfig{
+						Type:    "github",
+						Project: "owner/repo",
+					},
+					RolloutRef: corev1.LocalObjectReference{Name: "test-rollout"},
+				},
+				Status: kuberikv1alpha1.EnvironmentStatus{
+					EnvironmentInfos: []kuberikv1alpha1.EnvironmentInfo{},
+				},
+			}
+
+			graphData := &relationshipGraphData{
+				environmentInfos: map[string]environmentInfo{
+					"prod": {
+						Relationship: &kuberikv1alpha1.EnvironmentRelationship{
+							Environment: "staging",
+							Type:        kuberikv1alpha1.RelationshipTypeAfter,
+						},
+					},
+					"dev": {},
+					"staging": {
+						Relationship: &kuberikv1alpha1.EnvironmentRelationship{
+							Environment: "dev",
+							Type:        kuberikv1alpha1.RelationshipTypeAfter,
+						},
+					},
+				},
+				envHistory: map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					"dev":     {{ID: k8sptr.To(int64(10))}},
+					"staging": {{ID: k8sptr.To(int64(30))}},
+					"prod":    {{ID: k8sptr.To(int64(50))}},
+				},
+			}
+
+			Expect(reconciler.Create(context.Background(), environment)).To(Succeed())
+
+			err := reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), environment, graphData)
+			Expect(err).ToNot(HaveOccurred())
+
+			// dev -> staging -> prod
+			Expect(len(environment.Status.EnvironmentInfos)).To(Equal(3))
+			Expect(environment.Status.EnvironmentInfos[0].Environment).To(Equal("dev"))
+			Expect(environment.Status.EnvironmentInfos[1].Environment).To(Equal("staging"))
+			Expect(environment.Status.EnvironmentInfos[2].Environment).To(Equal("prod"))
+		})
+
+		It("Should sort history entries descending by ID", func() {
+			infos := []kuberikv1alpha1.EnvironmentInfo{}
+			history := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				{ID: k8sptr.To(int64(10))},
+				{ID: k8sptr.To(int64(30))},
+				{ID: k8sptr.To(int64(20))},
+			}
+
+			result := updateEnvironmentInfoWithHistory(infos, "dev", "url", nil, history)
+			Expect(len(result)).To(Equal(1))
+			Expect(result[0].History[0].ID).To(Equal(k8sptr.To(int64(30))))
+			Expect(result[0].History[1].ID).To(Equal(k8sptr.To(int64(20))))
+			Expect(result[0].History[2].ID).To(Equal(k8sptr.To(int64(10))))
+		})
+
+		It("Should handle complex branching (dev -> staging, dev -> test, staging -> prod)", func() {
+			graphData := &relationshipGraphData{
+				environmentInfos: map[string]environmentInfo{
+					"prod":    {Relationship: &kuberikv1alpha1.EnvironmentRelationship{Environment: "staging", Type: "after"}},
+					"staging": {Relationship: &kuberikv1alpha1.EnvironmentRelationship{Environment: "dev", Type: "after"}},
+					"test":    {Relationship: &kuberikv1alpha1.EnvironmentRelationship{Environment: "dev", Type: "after"}},
+					"dev":     {},
+				},
+				envHistory: map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					"dev":     {{ID: k8sptr.To(int64(10))}},
+					"staging": {{ID: k8sptr.To(int64(20))}},
+					"test":    {{ID: k8sptr.To(int64(15))}},
+					"prod":    {{ID: k8sptr.To(int64(30))}},
+				},
+			}
+
+			env := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "complex-env",
+					Namespace: "default",
+				},
+			}
+			Expect(reconciler.Create(context.Background(), env)).To(Succeed())
+
+			err := reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), env, graphData)
+			Expect(err).ToNot(HaveOccurred())
+
+			// dev should be first. staging/test are both after dev.
+			// staging (20) vs test (15) -> staging comes first
+			// prod is after staging -> prod must be after staging
+			// prod (30) vs test (15) -> prod comes before test
+			Expect(env.Status.EnvironmentInfos[0].Environment).To(Equal("dev"))
+			Expect(env.Status.EnvironmentInfos[1].Environment).To(Equal("staging"))
+			Expect(env.Status.EnvironmentInfos[2].Environment).To(Equal("prod"))
+			Expect(env.Status.EnvironmentInfos[3].Environment).To(Equal("test"))
+		})
+
+		It("Should select CurrentVersion by highest history ID", func() {
+			revOld := "old-rev"
+			revNew := "new-rev"
+			versionDeployments := map[string]versionDeploymentInfo{
+				revNew: {HistoryEntry: &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID:      k8sptr.To(int64(20)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revNew},
+				}},
+				revOld: {HistoryEntry: &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					ID:      k8sptr.To(int64(10)),
+					Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revOld},
+				}},
+			}
+			environment := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "current-version-env",
+					Namespace: "default",
+				},
+			}
+			Expect(reconciler.Create(context.Background(), environment)).To(Succeed())
+
+			err := reconciler.updateEnvironmentStatus(context.Background(), environment, nil, "", versionDeployments)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(environment.Status.CurrentVersion).To(Equal(revNew))
+		})
 	})
 
-	// Note: deploymentStatusMap tests removed as we now use history directly from rollouts in EnvironmentInfo
-	// Note: deploymentStatusMap tests removed as we now use history directly from rollouts in EnvironmentInfo
+	Context("updateEnvironmentInfoWithHistory sorting", func() {
+		It("Should sort history entries descending by ID", func() {
+			history := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				{ID: k8sptr.To(int64(10))},
+				{ID: k8sptr.To(int64(30))},
+				{ID: k8sptr.To(int64(20))},
+			}
+
+			infos := updateEnvironmentInfoWithHistory(nil, "dev", "https://dev.com", nil, history)
+
+			Expect(len(infos)).To(Equal(1))
+			Expect(len(infos[0].History)).To(Equal(3))
+			Expect(*infos[0].History[0].ID).To(Equal(int64(30)))
+			Expect(*infos[0].History[1].ID).To(Equal(int64(20)))
+			Expect(*infos[0].History[2].ID).To(Equal(int64(10)))
+		})
+
+		It("Should update existing entry and sort history", func() {
+			infos := []kuberikv1alpha1.EnvironmentInfo{
+				{
+					Environment: "dev",
+					History: []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+						{ID: k8sptr.To(int64(10))},
+					},
+				},
+			}
+
+			newHistory := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+				{ID: k8sptr.To(int64(5))},
+				{ID: k8sptr.To(int64(15))},
+			}
+
+			infos = updateEnvironmentInfoWithHistory(infos, "dev", "https://dev-updated.com", nil, newHistory)
+
+			Expect(len(infos)).To(Equal(1))
+			Expect(infos[0].EnvironmentURL).To(Equal("https://dev-updated.com"))
+			Expect(len(infos[0].History)).To(Equal(2))
+			Expect(*infos[0].History[0].ID).To(Equal(int64(15)))
+			Expect(*infos[0].History[1].ID).To(Equal(int64(5)))
+		})
+	})
+
+	Context("updateDeploymentStatusesForRelatedEnvironments sorting", func() {
+		It("Should sort environmentInfos alphabetically by name", func() {
+			environment := &kuberikv1alpha1.Environment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-env",
+				},
+				Status: kuberikv1alpha1.EnvironmentStatus{
+					EnvironmentInfos: []kuberikv1alpha1.EnvironmentInfo{},
+				},
+			}
+
+			graphData := &relationshipGraphData{
+				environmentInfos: map[string]environmentInfo{
+					"prod":    {EnvironmentURL: "https://prod.com"},
+					"dev":     {EnvironmentURL: "https://dev.com"},
+					"staging": {EnvironmentURL: "https://staging.com"},
+				},
+				envHistory: map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					"dev":     {{ID: k8sptr.To(int64(1))}},
+					"staging": {{ID: k8sptr.To(int64(2))}},
+					"prod":    {{ID: k8sptr.To(int64(3))}},
+				},
+			}
+
+			err := reconciler.Create(context.Background(), environment)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), environment, graphData)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(len(environment.Status.EnvironmentInfos)).To(Equal(3))
+			Expect(environment.Status.EnvironmentInfos[0].Environment).To(Equal("dev"))
+			Expect(environment.Status.EnvironmentInfos[1].Environment).To(Equal("prod"))
+			Expect(environment.Status.EnvironmentInfos[2].Environment).To(Equal("staging"))
+		})
+	})
 })

@@ -327,7 +327,14 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 	needsUpdate := false
 
 	// Update deployment ID
-	if environment.Status.DeploymentID == nil || *environment.Status.DeploymentID != *deploymentID {
+	deploymentIDChanged := false
+	if (environment.Status.DeploymentID == nil) != (deploymentID == nil) {
+		deploymentIDChanged = true
+	} else if deploymentID != nil && *environment.Status.DeploymentID != *deploymentID {
+		deploymentIDChanged = true
+	}
+
+	if deploymentIDChanged {
 		environment.Status.DeploymentID = deploymentID
 		needsUpdate = true
 	}
@@ -342,20 +349,16 @@ func (r *GitHubEnvironmentReconciler) updateEnvironmentStatus(ctx context.Contex
 	var currentVersion *string
 
 	// Find the newest version from versionDeployments to set as current version
-	revisions := make([]string, 0, len(versionDeployments))
-	for rev := range versionDeployments {
-		revisions = append(revisions, rev)
-	}
-	// Sort in reverse order (newest first)
-	sort.Slice(revisions, func(i, j int) bool {
-		return revisions[i] > revisions[j]
-	})
-
-	if len(revisions) > 0 {
-		versionInfo := versionDeployments[revisions[0]]
-		if versionInfo.HistoryEntry != nil && versionInfo.HistoryEntry.Version.Revision != nil {
-			currentVersion = versionInfo.HistoryEntry.Version.Revision
+	entries := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, 0, len(versionDeployments))
+	for _, info := range versionDeployments {
+		if info.HistoryEntry != nil {
+			entries = append(entries, *info.HistoryEntry)
 		}
+	}
+	sortHistoryEntriesDescending(entries)
+
+	if len(entries) > 0 {
+		currentVersion = entries[0].Version.Revision
 	}
 
 	// Update current version
@@ -1725,6 +1728,58 @@ func (r *GitHubEnvironmentReconciler) updateDeploymentStatusesForRelatedEnvironm
 		}
 	}
 
+	// Sort environment infos:
+	// 1. Ancestors before descendants (topological sort)
+	// 2. Tie-breaker: Environments with higher max history ID first
+	// 3. Stable sort: alphabetically by environment name
+
+	// Pre-calculate max IDs and parent map
+	maxIDMap := make(map[string]int64)
+	parentMap := make(map[string]string)
+	for _, info := range environmentInfoList {
+		maxIDMap[info.Environment] = getMaxHistoryID(info.History)
+		if info.Relationship != nil && info.Relationship.Environment != "" {
+			parentMap[info.Environment] = info.Relationship.Environment
+		}
+	}
+
+	// Recursive helper to check if envA is an ancestor of envB
+	var isAncestor func(envA, envB string) bool
+	isAncestor = func(envA, envB string) bool {
+		parent, exists := parentMap[envB]
+		if !exists {
+			return false
+		}
+		if parent == envA {
+			return true
+		}
+		return isAncestor(envA, parent)
+	}
+
+	sort.SliceStable(environmentInfoList, func(i, j int) bool {
+		envI := environmentInfoList[i].Environment
+		envJ := environmentInfoList[j].Environment
+
+		// If envI is an ancestor of envJ, envI comes first
+		if isAncestor(envI, envJ) {
+			return true
+		}
+		// If envJ is an ancestor of envI, envJ comes first
+		if isAncestor(envJ, envI) {
+			return false
+		}
+
+		// Tie-breaker: higher max history ID first
+		idI := maxIDMap[envI]
+		idJ := maxIDMap[envJ]
+		if idI != idJ {
+			return idI > idJ
+		}
+
+		// Last tie-breaker: environment name for stable sort
+		return envI < envJ
+	})
+
 	// Check if environment infos need update
 	if !environmentInfosEqual(environment.Status.EnvironmentInfos, environmentInfoList) {
 		environment.Status.EnvironmentInfos = environmentInfoList
@@ -1758,37 +1813,39 @@ func updateEnvironmentInfoWithRelationship(infos []kuberikv1alpha1.EnvironmentIn
 	return updateEnvironmentInfoWithHistory(infos, environment, environmentURL, relationship, nil)
 }
 
-// updateEnvironmentInfoWithHistory updates or adds an environment info entry with history
-// It always updates history if provided to ensure we have the latest data from rollouts
-// Deep copies history entries to avoid pointer issues and ensure we have fresh data
+// updateEnvironmentInfoWithHistory updates or adds an EnvironmentInfo entry to the list
+// It ensures that history entries are sorted descending by ID
 func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship, history []kuberikrolloutv1alpha1.DeploymentHistoryEntry) []kuberikv1alpha1.EnvironmentInfo {
+	var historyCopy []kuberikrolloutv1alpha1.DeploymentHistoryEntry
+	if history != nil {
+		// Deep copy and sort history descending by ID
+		historyCopy = make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
+		for i := range history {
+			historyCopy[i] = *history[i].DeepCopy()
+		}
+		sortHistoryEntriesDescending(historyCopy)
+	}
+
 	// Find existing entry
 	for i := range infos {
 		if infos[i].Environment == environment {
 			infos[i].EnvironmentURL = environmentURL
 			infos[i].Relationship = relationship
 			if history != nil {
-				// Always update history if provided to ensure we have the latest data
-				// Deep copy the history to avoid pointer issues and ensure fresh data
-				infos[i].History = make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
-				for j := range history {
-					infos[i].History[j] = *history[j].DeepCopy()
-				}
+				infos[i].History = historyCopy
 			}
 			return infos
 		}
 	}
-	// Add new entry - deep copy history
-	historyCopy := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
-	for i := range history {
-		historyCopy[i] = *history[i].DeepCopy()
-	}
-	return append(infos, kuberikv1alpha1.EnvironmentInfo{
+
+	// If not found, add new entry
+	infos = append(infos, kuberikv1alpha1.EnvironmentInfo{
 		Environment:    environment,
 		EnvironmentURL: environmentURL,
 		Relationship:   relationship,
 		History:        historyCopy,
 	})
+	return infos
 }
 
 // removeEnvironmentInfos removes entries matching the given filter function
@@ -1931,6 +1988,46 @@ func environmentInfosEqual(a, b []kuberikv1alpha1.EnvironmentInfo) bool {
 		}
 	}
 	return true
+}
+
+// getMaxHistoryID returns the maximum ID from history entries
+func getMaxHistoryID(entries []kuberikrolloutv1alpha1.DeploymentHistoryEntry) int64 {
+	var maxID int64 = -1
+	for _, entry := range entries {
+		if entry.ID != nil && *entry.ID > maxID {
+			maxID = *entry.ID
+		}
+	}
+	return maxID
+}
+
+// sortHistoryEntriesDescending sorts history entries in descending order by ID
+func sortHistoryEntriesDescending(entries []kuberikrolloutv1alpha1.DeploymentHistoryEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		idI := getHistoryID(&entries[i])
+		idJ := getHistoryID(&entries[j])
+		if idI != idJ {
+			return idI > idJ
+		}
+		// Fallback to revision for stable sort
+		return getRevision(&entries[i]) > getRevision(&entries[j])
+	})
+}
+
+// getRevision returns the revision from a history entry or empty string if missing
+func getRevision(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) string {
+	if entry != nil && entry.Version.Revision != nil {
+		return *entry.Version.Revision
+	}
+	return ""
+}
+
+// getHistoryID returns the ID from a history entry or -1 if missing
+func getHistoryID(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) int64 {
+	if entry != nil && entry.ID != nil {
+		return *entry.ID
+	}
+	return -1
 }
 
 // getEnvDeploymentKeys returns the keys from allEnvDeployments map for debugging
