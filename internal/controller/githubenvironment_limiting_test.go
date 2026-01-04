@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"testing"
 
 	kuberikv1alpha1 "github.com/kuberik/environment-controller/api/v1alpha1"
@@ -30,11 +31,13 @@ func TestBuildEnvironmentInfos_LimitsHistoryForIndirectConnections(t *testing.T)
 	createHistory := func(cnt int) []kuberikrolloutv1alpha1.DeploymentHistoryEntry {
 		h := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, cnt)
 		for i := 0; i < cnt; i++ {
-			revision := "rev"
+			revision := fmt.Sprintf("rev-%d", i)
+			tag := fmt.Sprintf("v1.0.%d", i)
 			h[i] = kuberikrolloutv1alpha1.DeploymentHistoryEntry{
 				ID: k8sptr.To(int64(cnt - i)), // 3, 2, 1
 				Version: kuberikrolloutv1alpha1.VersionInfo{
 					Revision: &revision,
+					Tag:      tag,
 				},
 			}
 		}
@@ -88,4 +91,55 @@ func TestBuildEnvironmentInfos_LimitsHistoryForIndirectConnections(t *testing.T)
 
 	// env-c: Indirectly connected, should have LIMITED history (1)
 	assertHistoryLen("env-c", 1)
+}
+
+func TestUpdateEnvironmentInfoWithHistory_RemovesDuplicates(t *testing.T) {
+	// Setup
+	history := []kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+		{
+			ID: k8sptr.To(int64(10)),
+			Version: kuberikrolloutv1alpha1.VersionInfo{
+				Revision: k8sptr.To("rev-10"),
+				Tag:      "v1.0.0",
+			},
+		},
+		{
+			ID: k8sptr.To(int64(20)),
+			Version: kuberikrolloutv1alpha1.VersionInfo{
+				Revision: k8sptr.To("rev-20"),
+				Tag:      "v1.0.1",
+			},
+		},
+		{
+			ID: k8sptr.To(int64(15)),
+			Version: kuberikrolloutv1alpha1.VersionInfo{
+				Revision: k8sptr.To("rev-15"),
+				Tag:      "v1.0.0", // Duplicate tag
+			},
+		},
+	}
+
+	// Executue with nil relationship/url as they don't matter
+	infos := updateEnvironmentInfoWithHistory(nil, "env", "url", nil, history)
+
+	// Assert
+	if len(infos) != 1 {
+		t.Fatalf("Expected 1 info, got %d", len(infos))
+	}
+
+	resultHistory := infos[0].History
+	// Should have 2 entries: v1.0.1 (20) and v1.0.0 (15)
+	// v1.0.0 (10) should be removed because 15 > 10 and they share tag v1.0.0
+
+	if len(resultHistory) != 2 {
+		t.Errorf("Expected 2 history entries (deduplicated), got %d", len(resultHistory))
+	}
+
+	// Check IDs
+	if *resultHistory[0].ID != 20 {
+		t.Errorf("Expected first entry ID 20, got %d", *resultHistory[0].ID)
+	}
+	if *resultHistory[1].ID != 15 {
+		t.Errorf("Expected second entry ID 15, got %d", *resultHistory[1].ID)
+	}
 }

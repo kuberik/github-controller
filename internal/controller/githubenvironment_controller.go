@@ -1714,12 +1714,34 @@ func (r *GitHubEnvironmentReconciler) updateAllowedVersionsFromRelationships(ctx
 func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, environment, environmentURL string, relationship *kuberikv1alpha1.EnvironmentRelationship, history []kuberikrolloutv1alpha1.DeploymentHistoryEntry) []kuberikv1alpha1.EnvironmentInfo {
 	var historyCopy []kuberikrolloutv1alpha1.DeploymentHistoryEntry
 	if history != nil {
-		// Deep copy and sort history descending by ID
-		historyCopy = make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
+		// Deep copy
+		copiedHistory := make([]kuberikrolloutv1alpha1.DeploymentHistoryEntry, len(history))
 		for i := range history {
-			historyCopy[i] = *history[i].DeepCopy()
+			copiedHistory[i] = *history[i].DeepCopy()
 		}
-		sortHistoryEntriesDescending(historyCopy)
+
+		// Sort descending by ID
+		sortHistoryEntriesDescending(copiedHistory)
+
+		// De-duplicate: keep only the first occurrence of each tag/revision
+		// Since it's sorted descending by ID, the first occurrence is the latest one
+		seen := make(map[string]bool)
+		for _, entry := range copiedHistory {
+			key := ""
+			if entry.Version.Tag != "" {
+				key = entry.Version.Tag
+			} else if entry.Version.Revision != nil {
+				key = *entry.Version.Revision
+			}
+
+			if key != "" {
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+			}
+			historyCopy = append(historyCopy, entry)
+		}
 	}
 
 	// Find existing entry
