@@ -187,13 +187,6 @@ spec:
               currentVersion:
                 description: CurrentVersion is the current version being deployed
                 type: string
-              deploymentId:
-                description: DeploymentID is the ID of the deployment (backend-specific)
-                format: int64
-                type: integer
-              deploymentUrl:
-                description: DeploymentURL is the URL of the deployment (backend-specific)
-                type: string
               environmentInfos:
                 description: |-
                   EnvironmentInfos tracks deployment information for each environment.

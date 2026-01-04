@@ -416,7 +416,7 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 		})
 
 		It("Should sort environmentInfos by relationship (ancestor first)", func() {
-			// This test verifies that updateDeploymentStatusesForRelatedEnvironments
+			// This test verifies that buildEnvironmentInfos (called via updateStatus)
 			// sorts environmentInfos topologically: ancestor -> descendant
 
 			environment := &kuberikv1alpha1.Environment{
@@ -463,7 +463,7 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 
 			Expect(reconciler.Create(context.Background(), environment)).To(Succeed())
 
-			err := reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), environment, graphData)
+			err := reconciler.updateStatus(context.Background(), environment, graphData)
 			Expect(err).ToNot(HaveOccurred())
 
 			// dev -> staging -> prod
@@ -512,7 +512,7 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 			}
 			Expect(reconciler.Create(context.Background(), env)).To(Succeed())
 
-			err := reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), env, graphData)
+			err := reconciler.updateStatus(context.Background(), env, graphData)
 			Expect(err).ToNot(HaveOccurred())
 
 			// dev should be first. staging/test are both after dev.
@@ -528,25 +528,36 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 		It("Should select CurrentVersion by highest history ID", func() {
 			revOld := "old-rev"
 			revNew := "new-rev"
-			versionDeployments := map[string]versionDeploymentInfo{
-				revNew: {HistoryEntry: &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
-					ID:      k8sptr.To(int64(20)),
-					Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revNew},
-				}},
-				revOld: {HistoryEntry: &kuberikrolloutv1alpha1.DeploymentHistoryEntry{
-					ID:      k8sptr.To(int64(10)),
-					Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revOld},
-				}},
-			}
 			environment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "current-version-env",
 					Namespace: "default",
 				},
+				Spec: kuberikv1alpha1.EnvironmentSpec{
+					Environment: "current-version-env",
+				},
 			}
 			Expect(reconciler.Create(context.Background(), environment)).To(Succeed())
 
-			err := reconciler.updateEnvironmentStatus(context.Background(), environment, nil, "", versionDeployments)
+			graphData := &relationshipGraphData{
+				environmentInfos: map[string]environmentInfo{
+					environment.Name: {},
+				},
+				envHistory: map[string][]kuberikrolloutv1alpha1.DeploymentHistoryEntry{
+					environment.Name: {
+						{
+							ID:      k8sptr.To(int64(20)),
+							Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revNew},
+						},
+						{
+							ID:      k8sptr.To(int64(10)),
+							Version: kuberikrolloutv1alpha1.VersionInfo{Revision: &revOld},
+						},
+					},
+				},
+			}
+
+			err := reconciler.updateStatus(context.Background(), environment, graphData)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(environment.Status.CurrentVersion).To(Equal(revNew))
 		})
@@ -594,7 +605,7 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 		})
 	})
 
-	Context("updateDeploymentStatusesForRelatedEnvironments sorting", func() {
+	Context("updateStatus sorting via buildEnvironmentInfos", func() {
 		It("Should sort environmentInfos alphabetically by name", func() {
 			environment := &kuberikv1alpha1.Environment{
 				ObjectMeta: metav1.ObjectMeta{
@@ -621,7 +632,7 @@ var _ = Describe("GitHub Environment Controller Unit Tests", func() {
 			err := reconciler.Create(context.Background(), environment)
 			Expect(err).ToNot(HaveOccurred())
 
-			err = reconciler.updateDeploymentStatusesForRelatedEnvironments(context.Background(), environment, graphData)
+			err = reconciler.updateStatus(context.Background(), environment, graphData)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(len(environment.Status.EnvironmentInfos)).To(Equal(3))

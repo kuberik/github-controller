@@ -126,14 +126,6 @@ type EnvironmentInfo struct {
 
 // EnvironmentStatus defines the observed state of Environment.
 type EnvironmentStatus struct {
-	// DeploymentID is the ID of the deployment (backend-specific)
-	// +optional
-	DeploymentID *int64 `json:"deploymentId,omitempty"`
-
-	// DeploymentURL is the URL of the deployment (backend-specific)
-	// +optional
-	DeploymentURL string `json:"deploymentUrl,omitempty"`
-
 	// LastStatusChangeTime is the last time the status was updated (only updated when status changes)
 	// +optional
 	LastStatusChangeTime *metav1.Time `json:"lastStatusChangeTime,omitempty"`
