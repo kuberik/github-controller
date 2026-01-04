@@ -59,13 +59,6 @@ type deploymentKey struct {
 	Environment string
 }
 
-// versionDeploymentInfo holds deployment information for a version
-type versionDeploymentInfo struct {
-	Status       string
-	DeploymentID *int64
-	HistoryEntry *kuberikrolloutv1alpha1.DeploymentHistoryEntry
-}
-
 // GitHubEnvironmentReconciler reconciles an Environment object for GitHub backend
 type GitHubEnvironmentReconciler struct {
 	client.Client
@@ -137,13 +130,13 @@ func (r *GitHubEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	// Create or update RolloutGate (uses Status)
+	// Create or update RolloutGate
 	if err := r.createOrUpdateRolloutGate(ctx, deployment); err != nil {
 		log.Error(err, "Failed to create or update RolloutGate")
 		return ctrl.Result{}, err
 	}
 
-	// Update allowed versions on RolloutGate based on relationships (uses Status)
+	// Update allowed versions on RolloutGate based on relationships
 	if err := r.updateAllowedVersionsFromRelationships(ctx, deployment); err != nil {
 		log.Error(err, "Failed to update allowed versions from relationships")
 		return ctrl.Result{}, err
@@ -1905,44 +1898,6 @@ func getHistoryID(entry *kuberikrolloutv1alpha1.DeploymentHistoryEntry) int64 {
 		return *entry.ID
 	}
 	return -1
-}
-
-// getEnvDeploymentKeys returns the keys from allEnvDeployments map for debugging
-func getEnvDeploymentKeys(allEnvDeployments map[string]map[string]versionDeploymentInfo) []string {
-	keys := make([]string, 0, len(allEnvDeployments))
-	for k := range allEnvDeployments {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// getVersionKeys returns the keys from a version deployment info map for debugging
-func getVersionKeys(deps map[string]versionDeploymentInfo) []string {
-	keys := make([]string, 0, len(deps))
-	for k := range deps {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// getEnvDeploymentKeysFromRaw returns keys from the raw envDeployments map
-func getEnvDeploymentKeysFromRaw(envDeployments map[string][]*github.Deployment) []string {
-	keys := make([]string, 0, len(envDeployments))
-	for k := range envDeployments {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// getRelevantEnvKeys returns keys from relevantEnvironments map
-func getRelevantEnvKeys(relevantEnvironments map[string]bool) []string {
-	keys := make([]string, 0, len(relevantEnvironments))
-	for k, v := range relevantEnvironments {
-		if v {
-			keys = append(keys, k)
-		}
-	}
-	return keys
 }
 
 // slicesEqual compares two string slices for equality
