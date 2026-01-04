@@ -1046,11 +1046,11 @@ func (r *GitHubEnvironmentReconciler) processDeploymentForHistory(ctx context.Co
 	var statuses []*github.DeploymentStatus
 	if d.ID != nil {
 		var err error
-		statuses, err = r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, d.GetID(), entryID, envName)
+		statuses, err = r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, d.GetID())
 		if err != nil {
 			// Log error but continue - we'll add entry without status if fetch fails
 			// This ensures we don't skip deployments due to transient errors
-			log.FromContext(ctx).Error(err, "Failed to list deployment statuses for deployment", "deploymentID", *d.ID, "entryID", entryID, "envName", envName)
+			log.FromContext(ctx).Error(err, "Failed to list deployment statuses for deployment", "deploymentID", *d.ID)
 		}
 	}
 
@@ -1072,7 +1072,7 @@ func (r *GitHubEnvironmentReconciler) processDeploymentForHistory(ctx context.Co
 
 // fetchAllDeploymentStatuses fetches all deployment statuses with pagination
 // entryID and envName are optional parameters used for logging errors
-func (r *GitHubEnvironmentReconciler) fetchAllDeploymentStatuses(ctx context.Context, ghClient *github.Client, owner, repo string, deploymentID int64, entryID int64, envName string) ([]*github.DeploymentStatus, error) {
+func (r *GitHubEnvironmentReconciler) fetchAllDeploymentStatuses(ctx context.Context, ghClient *github.Client, owner, repo string, deploymentID int64) ([]*github.DeploymentStatus, error) {
 	allStatuses := make([]*github.DeploymentStatus, 0)
 	statusOpts := &github.ListOptions{PerPage: 100}
 	for {
@@ -1390,7 +1390,7 @@ func (r *GitHubEnvironmentReconciler) buildRelationshipGraph(ctx context.Context
 		}
 
 		// Extract environment URL from the latest deployment's statuses
-		statuses, err := r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, latestDeployment.GetID(), 0, envName)
+		statuses, err := r.fetchAllDeploymentStatuses(ctx, ghClient, owner, repo, latestDeployment.GetID())
 		if err == nil && len(statuses) > 0 {
 			// Statuses are ordered newest first, so the first one has the latest environment URL
 			if statuses[0].EnvironmentURL != nil && *statuses[0].EnvironmentURL != "" {
@@ -1716,17 +1716,6 @@ func updateEnvironmentInfoWithHistory(infos []kuberikv1alpha1.EnvironmentInfo, e
 		History:        historyCopy,
 	})
 	return infos
-}
-
-// removeEnvironmentInfos removes entries matching the given filter function
-func removeEnvironmentInfos(infos []kuberikv1alpha1.EnvironmentInfo, shouldRemove func(kuberikv1alpha1.EnvironmentInfo) bool) []kuberikv1alpha1.EnvironmentInfo {
-	result := make([]kuberikv1alpha1.EnvironmentInfo, 0, len(infos))
-	for _, entry := range infos {
-		if !shouldRemove(entry) {
-			result = append(result, entry)
-		}
-	}
-	return result
 }
 
 // historyEntriesEqual compares two DeploymentHistoryEntry slices for equality
