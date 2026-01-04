@@ -371,6 +371,32 @@ func (r *GitHubEnvironmentReconciler) buildEnvironmentInfos(environment *kuberik
 			}
 		}
 
+		// Check if environment is directly connected to current environment
+		// - It is the current environment
+		// - Current environment depends on it
+		// - It depends on current environment
+		isDirectlyConnected := false
+		currentEnv := environment.Spec.Environment
+
+		if envName == currentEnv {
+			isDirectlyConnected = true
+		} else {
+			// Check if current environment depends on this env
+			if environment.Spec.Relationship != nil && environment.Spec.Relationship.Environment == envName {
+				isDirectlyConnected = true
+			}
+			// Check if this env depends on current environment
+			if info.Relationship != nil && info.Relationship.Environment == currentEnv {
+				isDirectlyConnected = true
+			}
+		}
+
+		// If not directly connected, keep only the latest deployment history
+		if !isDirectlyConnected && len(history) > 1 {
+			// History is already sorted descending by ID/Revision in buildRelationshipGraph
+			history = []kuberikrolloutv1alpha1.DeploymentHistoryEntry{history[0]}
+		}
+
 		environmentInfoList = updateEnvironmentInfoWithHistory(environmentInfoList, envName, info.EnvironmentURL, info.Relationship, history)
 	}
 
