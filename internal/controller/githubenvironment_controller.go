@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	k8sptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -830,6 +831,7 @@ func (r *GitHubEnvironmentReconciler) syncDeploymentHistory(ctx context.Context,
 				ProductionEnvironment: github.Bool(environment.Spec.Environment == "production"),
 				AutoMerge:             github.Bool(false),
 				Payload:               payloadJSON,
+				RequiredContexts:      k8sptr.To([]string{}),
 			}
 			created, _, err := gh.Repositories.CreateDeployment(ctx, owner, repo, req)
 			if err != nil {
