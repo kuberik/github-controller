@@ -454,6 +454,7 @@ var _ = Describe("Environment Controller", func() {
 						Namespace: ControllerNamespace,
 					},
 					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"dashboard.example.com"},
 						CommonRouteSpec: gatewayv1.CommonRouteSpec{
 							ParentRefs: []gatewayv1.ParentReference{
 								{
@@ -526,6 +527,7 @@ var _ = Describe("Environment Controller", func() {
 						Namespace: ControllerNamespace,
 					},
 					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"dashboard.example.com"},
 						CommonRouteSpec: gatewayv1.CommonRouteSpec{
 							ParentRefs: []gatewayv1.ParentReference{
 								{
@@ -578,6 +580,7 @@ var _ = Describe("Environment Controller", func() {
 						Namespace: ControllerNamespace,
 					},
 					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"dashboard.example.com"},
 						CommonRouteSpec: gatewayv1.CommonRouteSpec{
 							ParentRefs: []gatewayv1.ParentReference{
 								{
@@ -607,7 +610,7 @@ var _ = Describe("Environment Controller", func() {
 				Expect(url).To(BeEmpty())
 			})
 
-			It("Should return empty string when HTTPRoute exists but Gateway has no hostname", func() {
+			It("Should return empty string when HTTPRoute exists but has no hostname", func() {
 				// Create service
 				svc := &corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
@@ -754,6 +757,7 @@ var _ = Describe("Environment Controller", func() {
 						Namespace: ControllerNamespace,
 					},
 					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"dashboard.example.com"},
 						CommonRouteSpec: gatewayv1.CommonRouteSpec{
 							ParentRefs: []gatewayv1.ParentReference{
 								{
