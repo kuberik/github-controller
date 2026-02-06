@@ -612,12 +612,17 @@ func (r *GitHubEnvironmentReconciler) getRolloutDashboardURL(ctx context.Context
 					// Only check if backend is in the same namespace as the service
 					if backendNamespace == controllerNamespace && backendRef.Name == gatewayv1.ObjectName("rollout-dashboard") {
 						// Found HTTPRoute pointing to rollout-dashboard
-						// Now we need to get the Gateway to find the hostname
+						// Get hostname from HTTPRoute spec, not from Gateway (which may have wildcards)
+						if len(httpRoute.Spec.Hostnames) == 0 {
+							continue
+						}
+						hostname := string(httpRoute.Spec.Hostnames[0])
+
+						// Get the Gateway to determine protocol (HTTP vs HTTPS)
 						if len(httpRoute.Spec.ParentRefs) == 0 {
 							continue
 						}
 
-						// Get the first parent Gateway
 						parentRef := httpRoute.Spec.ParentRefs[0]
 						gatewayName := string(parentRef.Name)
 						gatewayNamespace := controllerNamespace
@@ -633,16 +638,44 @@ func (r *GitHubEnvironmentReconciler) getRolloutDashboardURL(ctx context.Context
 							continue
 						}
 
-						// Find a listener with a hostname
-						for _, listener := range gateway.Spec.Listeners {
-							if listener.Hostname != nil && *listener.Hostname != "" {
-								scheme := "https"
-								if listener.Protocol == gatewayv1.HTTPProtocolType {
-									scheme = "http"
-								}
-								baseURL = fmt.Sprintf("%s://%s", scheme, string(*listener.Hostname))
+					// Find the listener to determine protocol
+					// If parentRef specifies a SectionName, use that specific listener
+					// Otherwise, match listener by hostname
+					var targetListener *gatewayv1.Listener
+					if parentRef.SectionName != nil {
+						// Match by listener name
+						listenerName := string(*parentRef.SectionName)
+						for i := range gateway.Spec.Listeners {
+							if string(gateway.Spec.Listeners[i].Name) == listenerName {
+								targetListener = &gateway.Spec.Listeners[i]
 								break
 							}
+						}
+					} else {
+						// Match listener by hostname
+						for i := range gateway.Spec.Listeners {
+							if gateway.Spec.Listeners[i].Hostname != nil {
+								// Check if listener hostname matches or is a wildcard that covers our hostname
+								listenerHostname := string(*gateway.Spec.Listeners[i].Hostname)
+								if listenerHostname == hostname || listenerHostname == "*" ||
+									(strings.HasPrefix(listenerHostname, "*.") && strings.HasSuffix(hostname, "."+listenerHostname[2:])) {
+									targetListener = &gateway.Spec.Listeners[i]
+									break
+								}
+							}
+						}
+						// If no match found, use first listener as fallback
+						if targetListener == nil && len(gateway.Spec.Listeners) > 0 {
+							targetListener = &gateway.Spec.Listeners[0]
+						}
+					}
+
+						if targetListener != nil {
+							scheme := "https"
+							if targetListener.Protocol == gatewayv1.HTTPProtocolType {
+								scheme = "http"
+							}
+							baseURL = fmt.Sprintf("%s://%s", scheme, hostname)
 						}
 
 						if baseURL != "" {
